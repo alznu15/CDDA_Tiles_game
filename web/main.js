@@ -368,6 +368,84 @@ const input={
 let jumpRequest=false;
 let lastSpaceDown=0;
 
+// Live keyboard diagnostics. This records the actual DOM keyboard events separately
+// from the game's logical input state, so W+Shift+Space can be verified directly.
+const inputDiag={
+  W:{down:false,keydown:0,keyup:0,last:''},
+  A:{down:false,keydown:0,keyup:0,last:''},
+  S:{down:false,keydown:0,keyup:0,last:''},
+  D:{down:false,keydown:0,keyup:0,last:''},
+  Shift:{down:false,keydown:0,keyup:0,last:''},
+  Space:{down:false,keydown:0,keyup:0,keypress:0,last:''}
+};
+const inputDiagLog=[];
+function recordInputEvent(type,e,code){
+  const key =
+    code==='KeyW' ? 'W' :
+    code==='KeyA' ? 'A' :
+    code==='KeyS' ? 'S' :
+    code==='KeyD' ? 'D' :
+    (code==='ShiftLeft'||code==='ShiftRight') ? 'Shift' :
+    code==='Space' ? 'Space' : '';
+  if(!key) return;
+  const d=inputDiag[key];
+  if(type==='keydown'){
+    d.keydown++;
+    d.down=true;
+  }else if(type==='keyup'){
+    d.keyup++;
+    d.down=false;
+  }else if(type==='keypress'){
+    d.keypress++;
+  }
+  d.last=type+' '+(e.code||'')+' key='+JSON.stringify(e.key||'')+
+    ' repeat='+!!e.repeat+' shiftKey='+!!e.shiftKey+
+    ' ctrl='+!!e.ctrlKey+' alt='+!!e.altKey;
+  inputDiagLog.unshift({
+    t:performance.now(),
+    type,key,
+    code:e.code||'',
+    key:e.key||'',
+    repeat:!!e.repeat,
+    shiftKey:!!e.shiftKey
+  });
+  if(inputDiagLog.length>12) inputDiagLog.pop();
+}
+
+function updateInputDiagnostics(){
+  const panel=document.getElementById('inputDiag');
+  if(!panel) return;
+  const rows=['W','A','S','D','Shift','Space'].map(k=>{
+    const d=inputDiag[k];
+    const down=d.down;
+    return '<tr>'+
+      '<td>'+k+'</td>'+
+      '<td class="'+(down?'pressed':'released')+'">'+(down?'DOWN':'UP')+'</td>'+
+      '<td>'+d.keydown+'</td>'+
+      '<td>'+d.keyup+'</td>'+
+      '<td>'+(k==='Space'?d.keypress:'—')+'</td>'+
+    '</tr>';
+  }).join('');
+  const comboW=inputDiag.W.down;
+  const comboShift=inputDiag.Shift.down;
+  const comboSpace=inputDiag.Space.down;
+  const spaceEvents=inputDiag.Space.keydown+inputDiag.Space.keyup+inputDiag.Space.keypress;
+  const recent=inputDiagLog.slice(0,5).map(x=>
+    x.type+' '+x.key+' ['+x.code+']'+(x.repeat?' repeat':'')
+  ).join('<br>');
+  panel.innerHTML=
+    '<div class="diagTitle">INPUT DIAGNOSTIC</div>'+
+    '<div class="diagCombo">W '+(comboW?'✓':'·')+
+      ' &nbsp; SHIFT '+(comboShift?'✓':'·')+
+      ' &nbsp; SPACE '+(comboSpace?'✓':'·')+
+    '</div>'+
+    '<table><thead><tr><th>KEY</th><th>NOW</th><th>DOWN</th><th>UP</th><th>PRESS</th></tr></thead>'+
+    '<tbody>'+rows+'</tbody></table>'+
+    '<div class="diagResult">SPACE EVENTS RECEIVED: <b>'+spaceEvents+
+      '</b> &nbsp; | &nbsp; GAME SPACE STATE: <b>'+(input.space?'DOWN':'UP')+'</b></div>'+
+    '<div class="diagRecent">'+(recent||'No keyboard events yet.')+'</div>';
+}
+
 // Dedicated W+Shift sprint-jump state machine.
 // This is intentionally separate from the normal jump path.
 const sprintJump={
@@ -412,6 +490,8 @@ function requestJump(){
 
 function handleKeyDown(e){
   const code=normalizeCode(e);
+  recordInputEvent('keydown',e,code);
+  updateInputDiagnostics();
 
   if(code==='Space'){
     e.preventDefault();
@@ -460,6 +540,8 @@ function performJump(){
 
 function handleKeyUp(e){
   const code=normalizeCode(e);
+  recordInputEvent('keyup',e,code);
+  updateInputDiagnostics();
 
   // Compatibility path: some keyboard/browser combinations expose Space
   // on keyup but not keydown. Treat that Space as a real jump event too.
@@ -472,7 +554,10 @@ function handleKeyUp(e){
 
 addEventListener('keydown',handleKeyDown,true);
 addEventListener('keypress',e=>{
-  if(normalizeCode(e)==='Space'){
+  const code=normalizeCode(e);
+  recordInputEvent('keypress',e,code);
+  updateInputDiagnostics();
+  if(code==='Space'){
     e.preventDefault();
     if(!e.repeat) performJump();
   }
@@ -490,7 +575,10 @@ addEventListener('beforeinput',e=>{
 
 addEventListener('blur',()=>{
   input.w=input.a=input.s=input.d=input.shift=input.space=false;
+  inputDiag.W.down=inputDiag.A.down=inputDiag.S.down=inputDiag.D.down=false;
+  inputDiag.Shift.down=inputDiag.Space.down=false;
   jumpRequest=false;
+  updateInputDiagnostics();
 });
 
 window.__INPUT_STATE__=()=>({
@@ -625,12 +713,17 @@ function updateCamera(dt){
 }
 
 const clock=new THREE.Clock();
+let lastDiagPaint=0;
 function animate(){
   requestAnimationFrame(animate);
   const dt=Math.min(clock.getDelta(),.05);
   const now=performance.now();
   updatePlayer(dt,now);
   updateCamera(dt);
+  if(now-lastDiagPaint>80){
+    updateInputDiagnostics();
+    lastDiagPaint=now;
+  }
   renderer.render(scene,camera);
 }
 animate();

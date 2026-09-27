@@ -303,9 +303,17 @@ async function loadCharacter(){
     mixer=new THREE.AnimationMixer(characterRoot);
     for(const clip of gltf.animations){
       const key=clip.name.toLowerCase();
-      if(key==='idle') actions.Idle=mixer.clipAction(clip);
-      else if(key==='walk') actions.Walk=mixer.clipAction(clip);
-      else if(key==='run') actions.Run=mixer.clipAction(clip);
+      const action=mixer.clipAction(clip);
+
+      if(key.includes('jump') || key.includes('fall') || key.includes('air')){
+        if(!actions.Jump) actions.Jump=action;
+      }else if(key.includes('idle')){
+        if(!actions.Idle) actions.Idle=action;
+      }else if(key.includes('walk')){
+        if(!actions.Walk) actions.Walk=action;
+      }else if(key.includes('run')){
+        if(!actions.Run) actions.Run=action;
+      }
     }
     setAction('Idle',0);
     characterReady=true;
@@ -408,20 +416,11 @@ function handleKeyDown(e){
   if(code==='Space'){
     e.preventDefault();
 
-    if(!e.repeat){
-      // Dedicated sprint-jump combo gets first priority.
-      if(input.w && input.shift){
-        triggerSprintJump();
-      }else{
-        setInput('Space',true);
-        requestJump();
+    setInput('Space',true);
 
-        if(started && grounded){
-          verticalVelocity=jumpSpeed;
-          grounded=false;
-          jumpRequest=false;
-        }
-      }
+    if(!e.repeat){
+      performJump();
+      requestJump();
     }
     return;
   }
@@ -434,48 +433,58 @@ function handleKeyDown(e){
   }
 }
 
-function triggerSprintJump(){
-  if(!started || !input.w || !input.shift || !grounded) return false;
-  const now=performance.now();
-  if(now-sprintJump.lastTrigger<sprintJump.cooldown) return false;
+function performJump(){
+  if(!started || !grounded) return false;
 
-  sprintJump.active=true;
-  sprintJump.phase=0;
-  sprintJump.timer=now;
-  sprintJump.lastTrigger=now;
+  const now=performance.now();
+  const sprinting=input.w && input.shift;
+
+  if(sprinting && now-sprintJump.lastTrigger<sprintJump.cooldown) return false;
 
   verticalVelocity=jumpSpeed;
   grounded=false;
   jumpRequest=false;
-  input.space=true;
+
+  // Sprint is completely independent from Jump.
+  // Space only decides "jump"; the current sprint state decides
+  // whether the special sprint-jump animation path is used.
+  if(sprinting){
+    sprintJump.active=true;
+    sprintJump.phase=0;
+    sprintJump.timer=now;
+    sprintJump.lastTrigger=now;
+  }
+
   return true;
 }
 
 function handleKeyUp(e){
   const code=normalizeCode(e);
 
-  // Some keyboard/browser combinations can fail to expose the initial Space
-  // keydown while W+Shift is held. If Space appears on keyup, use it as a
-  // jump fallback. This path only activates for that exact problematic combo.
-  if(code==='Space' && started && input.w && input.shift && grounded){
-    triggerSprintJump();
+  // Compatibility path: some keyboard/browser combinations expose Space
+  // on keyup but not keydown. Treat that Space as a real jump event too.
+  if(code==='Space' && started && grounded){
+    performJump();
   }
 
   if(code) setInput(code,false);
 }
 
-addEventListener('keydown',handleKeyDown,false);
-addEventListener('keyup',handleKeyUp,false);
+addEventListener('keydown',handleKeyDown,true);
+addEventListener('keypress',e=>{
+  if(normalizeCode(e)==='Space'){
+    e.preventDefault();
+    if(!e.repeat) performJump();
+  }
+},true);
+addEventListener('keyup',handleKeyUp,true);
 
 // Additional compatibility path for browsers that expose a printable Space
 // key through beforeinput instead of the expected keyboard event.
 addEventListener('beforeinput',e=>{
-  if(!started || !input.w || !input.shift || !grounded) return;
   if(e.inputType==='insertText' && (e.data===' ' || e.data===null)){
     e.preventDefault();
-    verticalVelocity=jumpSpeed;
-    grounded=false;
-    jumpRequest=false;
+    performJump();
   }
 },false);
 
@@ -564,10 +573,9 @@ function updatePlayer(dt,time){
   }
 
   if(started){
-    // Fallback path for any Space press that arrived while the frame was airborne.
+    // Tiny compatibility queue for platforms that deliver Space slightly late.
     if(jumpRequest && grounded && performance.now()-lastSpaceDown<220){
-      verticalVelocity=jumpSpeed;
-      grounded=false;
+      performJump();
       jumpRequest=false;
     }else if(jumpRequest && performance.now()-lastSpaceDown>=220){
       jumpRequest=false;
@@ -594,11 +602,9 @@ function updatePlayer(dt,time){
   if(mixer) mixer.update(dt);
   if(characterReady){
     if(sprintJump.active){
-      // Use the dedicated jump animation if the asset provides one; otherwise
-      // retain the sprint/run visual while the physics performs the jump.
-      const jumpAction=actions.Jump||actions.SprintJump||actions.Run;
-      if(jumpAction) setAction(jumpAction,.08);
-      sprintJump.phase=Math.min(1,(performance.now()-sprintJump.timer)/520);
+      const jumpAction=actions.Jump||actions.Run||actions.Idle;
+      if(jumpAction) setAction(jumpAction,.06);
+      sprintJump.phase=Math.min(1,(performance.now()-sprintJump.timer)/620);
       if(sprintJump.phase>=1 && grounded) sprintJump.active=false;
     }else{
       setAction(moving?(sprint?'Run':'Walk'):'Idle',.15);

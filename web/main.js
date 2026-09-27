@@ -117,7 +117,6 @@ function house(x, z, rot = 0, palette = 0) {
   addBox([w, h, d], [0, h/2, 0], wall, group);
   addBox([w + .7, .7, d + .7], [0, h + .35, 0], roof, group);
   addBox([3.6, 3.9, .2], [0, 2.05, d/2 + .12], MAT.wood, group);
-  addBox([3.9, .18, .22], [0, 4.1, d/2 + .22], MAT.glass, group);
   windowRow(-4.7, 3.55, d/2 + .1, 2.8, 2, 4.3, MAT.glass, false);
   windowRow(4.7, 3.55, d/2 + .1, 2.8, 2, 4.3, MAT.glass, false);
   addBox([.8, 3.8, 3.0], [-w/2 - .05, 2.0, 0], MAT.glass, group);
@@ -161,7 +160,6 @@ function rock(x, z, scale = 1) {
 function lamp(x, z) {
   const g = new THREE.Group(); g.position.set(x, 0, z); decor.add(g);
   addCylinder(.1, 5.6, [0, 2.8, 0], MAT.metal, g, 8);
-  const arm = new THREE.Mesh(new THREE.CylinderGeometry(.08,.08,1.25,8), MAT.metal); arm.position.set(.5,5.5,0); arm.rotation.z = Math.PI/2; arm.castShadow = true; g.add(arm);
   const bulb = new THREE.Mesh(new THREE.SphereGeometry(.18,10,8), MAT.visor); bulb.position.set(1.1,5.5,0); bulb.castShadow = true; g.add(bulb);
 }
 function planter(x, z, rot = 0) {
@@ -194,14 +192,14 @@ function buildMap() {
   world.add(centralPlaza);
 
   // Raised floor covers the old road/decor geometry beneath this square.
-  addBox([46,.32,46],[0,.42,0],MAT.concreteDark,centralPlaza);
-  addBox([41.8,.12,41.8],[0,.64,0],MAT.white,centralPlaza);
+  addBox([46,.18,46],[0,.10,0],MAT.concreteDark,centralPlaza);
+  addBox([41.8,.10,41.8],[0,.20,0],MAT.white,centralPlaza);
 
   // Thick white square frame.
-  addBox([44,.55,1.25],[0,.94,-22.35],MAT.white,centralPlaza);
-  addBox([44,.55,1.25],[0,.94,22.35],MAT.white,centralPlaza);
-  addBox([1.25,.55,44],[-22.35,.94,0],MAT.white,centralPlaza);
-  addBox([1.25,.55,44],[22.35,.94,0],MAT.white,centralPlaza);
+  addBox([44,.28,1.25],[0,.18,-22.35],MAT.white,centralPlaza);
+  addBox([44,.28,1.25],[0,.18,22.35],MAT.white,centralPlaza);
+  addBox([1.25,.28,44],[-22.35,.18,0],MAT.white,centralPlaza);
+  addBox([1.25,.28,44],[22.35,.18,0],MAT.white,centralPlaza);
 
   // Plain inset stone surface. No floating blue bars are generated here.
   const inset = new THREE.Mesh(
@@ -209,7 +207,7 @@ function buildMap() {
     new THREE.MeshStandardMaterial({color:0xaeb5b7,roughness:.9})
   );
   inset.rotation.x = -Math.PI/2;
-  inset.position.y = .715;
+  inset.position.y = .255;
   inset.receiveShadow = true;
   centralPlaza.add(inset);
 
@@ -221,7 +219,7 @@ function buildMap() {
     new THREE.CylinderGeometry(8.8,8.8,.65,64),
     MAT.concreteDark
   );
-  basinOuter.position.y = 1.10;
+  basinOuter.position.y = .55;
   basinOuter.castShadow = true;
   basinOuter.receiveShadow = true;
   fountain.add(basinOuter);
@@ -230,7 +228,7 @@ function buildMap() {
     new THREE.CylinderGeometry(7.35,7.35,.34,64),
     MAT.white
   );
-  basinInner.position.y = 1.45;
+  basinInner.position.y = .90;
   basinInner.castShadow = true;
   basinInner.receiveShadow = true;
   fountain.add(basinInner);
@@ -247,7 +245,7 @@ function buildMap() {
     waterMat
   );
   water.rotation.x = -Math.PI/2;
-  water.position.y = 1.64;
+  water.position.y = 1.09;
   water.receiveShadow = true;
   fountain.add(water);
 
@@ -255,7 +253,7 @@ function buildMap() {
     new THREE.CylinderGeometry(1.25,1.55,1.65,32),
     MAT.concreteDark
   );
-  pedestal.position.y = 2.46;
+  pedestal.position.y = 1.91;
   pedestal.castShadow = true;
   pedestal.receiveShadow = true;
   fountain.add(pedestal);
@@ -272,7 +270,7 @@ function buildMap() {
     new THREE.CylinderGeometry(.18,.28,3.1,16),
     jetMat
   );
-  mainJet.position.y = 4.03;
+  mainJet.position.y = 3.48;
   mainJet.castShadow = true;
   fountain.add(mainJet);
 
@@ -281,7 +279,7 @@ function buildMap() {
     MAT.white
   );
   crown.rotation.x = Math.PI/2;
-  crown.position.y = 4.05;
+  crown.position.y = 3.50;
   crown.castShadow = true;
   fountain.add(crown);
 
@@ -292,12 +290,12 @@ function buildMap() {
       new THREE.CylinderGeometry(.28,.34,.34,20),
       jetMat
     );
-    nozzle.position.set(x,1.85,z);
+    nozzle.position.set(x,1.30,z);
     nozzle.castShadow = true;
     fountain.add(nozzle);
   }
 
-  collider(0,0,17.5,17.5,.4);
+  collider(0,0,15.5,15.5,.4); // keep the player out of the fountain basin
   collider(0, 105, 210, 2, 0);
 }
 buildMap();

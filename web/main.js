@@ -77,6 +77,9 @@ scene.add(sun);
 const world = new THREE.Group();
 scene.add(world);
 const staticColliders = [];
+const walkableSurfaces = [];
+const terrainStepHeight = .6;
+const terrainSnapRate = 18;
 
 const MAT = {
   grass:new THREE.MeshStandardMaterial({color:0x55745a,roughness:1}),
@@ -108,6 +111,24 @@ function collider(x,z,w,d,pad=.7,h=32) {
   staticColliders.push({x,z,w:w+pad,d:d+pad,h});
 }
 
+function addWalkableSurface(x,z,w,d,height){
+  walkableSurfaces.push({x,z,w,d,height});
+}
+
+function groundHeightAt(x,z){
+  let height=0;
+  for(const s of walkableSurfaces){
+    if(
+      Math.abs(x-s.x)<=s.w*.5 &&
+      Math.abs(z-s.z)<=s.d*.5 &&
+      s.height>height
+    ){
+      height=s.height;
+    }
+  }
+  return height;
+}
+
 function isBlocked(x,z,r=.55) {
   if (x < -146 || x > 146 || z < -146 || z > 146) return true;
   for (const c of staticColliders) {
@@ -116,23 +137,30 @@ function isBlocked(x,z,r=.55) {
   return false;
 }
 
+function canTraverseTo(x,z,fromGround){
+  if(isBlocked(x,z,playerRadius)) return false;
+  return Math.abs(groundHeightAt(x,z)-fromGround)<=terrainStepHeight;
+}
+
 function addRoad(x,z,w,d) {
   box(w,.14,d,x,.07,z,MAT.road);
+  addWalkableSurface(x,z,w,d,.14);
   const horizontal = w > d;
   const count = horizontal ? Math.floor((w-14)/12) : Math.floor((d-14)/12);
   for(let i=0;i<count;i++){
     if(horizontal){
       const px = x - (count-1)*6 + i*12;
-      box(4.5,.018,.16,px,.151,z,MAT.white);
+      box(4.5,.004,.16,px,.142,z,MAT.white);
     }else{
       const pz = z - (count-1)*6 + i*12;
-      box(.16,.018,4.5,x,.151,pz,MAT.white);
+      box(.16,.004,4.5,x,.142,pz,MAT.white);
     }
   }
 }
 
 function addSidewalk(x,z,w,d){
   box(w,.18,d,x,.16,z,MAT.curb);
+  addWalkableSurface(x,z,w,d,.25);
 }
 
 function addBuilding(x,z,w,d,h,mat){
@@ -172,7 +200,7 @@ function buildMap(){
   ground.rotation.x=-Math.PI/2;
   ground.receiveShadow=true;
   world.add(ground);
-  box(220,.12,220,0,.02,0,MAT.soil);
+  box(220,.08,220,0,-.04,0,MAT.soil);
 
   // Fresh road layout. Nothing from the previous map is reused.
   addRoad(0,0,22,220);
@@ -194,7 +222,9 @@ function buildMap(){
 
   // Small open central plaza; deliberately no fountain or repeating floating bars.
   box(34,.10,34,0,.19,0,MAT.concrete);
-  box(27,.05,27,0,.245,0,MAT.white);
+  addWalkableSurface(0,0,34,34,.24);
+  box(27,.008,27,0,.244,0,MAT.white);
+  addWalkableSurface(0,0,27,27,.248);
 
   for(const p of [
     [-31,-27],[-31,27],[31,-27],[31,27],
@@ -644,6 +674,7 @@ function updateSprintJumpArm(){
 
 function updatePlayer(dt,time){
   updateSprintJumpArm();
+
   const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
   const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
   const move=new THREE.Vector3();
@@ -659,15 +690,24 @@ function updatePlayer(dt,time){
   const speed=sprint?10.5:6.2;
 
   if(moving && started){
-    const step=move.multiplyScalar(speed*dt);
+    const currentGround=groundHeightAt(player.position.x,player.position.z);
+    const step=move.clone().multiplyScalar(speed*dt);
     const nx=player.position.x+step.x;
     const nz=player.position.z+step.z;
-    if(!isBlocked(nx,player.position.z,playerRadius)) player.position.x=nx;
-    if(!isBlocked(player.position.x,nz,playerRadius)) player.position.z=nz;
+
+    if(canTraverseTo(nx,player.position.z,currentGround)){
+      player.position.x=nx;
+    }
+    if(canTraverseTo(player.position.x,nz,groundHeightAt(player.position.x,player.position.z))){
+      player.position.z=nz;
+    }
+
     const targetYaw=Math.atan2(step.x,step.z);
     const diff=THREE.MathUtils.euclideanModulo(targetYaw-player.rotation.y+Math.PI,Math.PI*2)-Math.PI;
     player.rotation.y+=diff*Math.min(1,dt*12);
   }
+
+  const surfaceY=groundHeightAt(player.position.x,player.position.z);
 
   if(started){
     // Tiny compatibility queue for platforms that deliver Space slightly late.
@@ -678,15 +718,27 @@ function updatePlayer(dt,time){
       jumpRequest=false;
     }
 
-    verticalVelocity+=gravity*dt;
-    const nextY=player.position.y+verticalVelocity*dt;
-    if(nextY<=0){
-      player.position.y=0;
+    if(grounded){
+      // Terrain traversal is automatic: small road/sidewalk height changes are
+      // absorbed as a smooth footstep/step-up animation instead of requiring jump.
       verticalVelocity=0;
-      grounded=true;
+      player.position.y=THREE.MathUtils.damp(
+        player.position.y,
+        surfaceY,
+        terrainSnapRate,
+        dt
+      );
     }else{
-      player.position.y=nextY;
-      grounded=false;
+      verticalVelocity+=gravity*dt;
+      const nextY=player.position.y+verticalVelocity*dt;
+      if(nextY<=surfaceY){
+        player.position.y=surfaceY;
+        verticalVelocity=0;
+        grounded=true;
+      }else{
+        player.position.y=nextY;
+        grounded=false;
+      }
     }
   }
 
@@ -767,8 +819,17 @@ function updateCamera(dt){
     desired.copy(target).addScaledVector(fromTarget,safeDistance);
   }
 
+  // The ground itself is solid. Prevent the camera body from dropping below
+  // the terrain, including when looking almost straight down.
+  const floorY=groundHeightAt(desired.x,desired.z)+cameraCollisionRadius;
+  if(desired.y<floorY){
+    desired.y=floorY;
+  }
+
   camera.position.lerp(desired,1-Math.pow(.001,dt));
-  camera.lookAt(target);
+
+  const lookTarget=target.clone();
+  camera.lookAt(lookTarget);
 }
 
 const clock=new THREE.Clock();

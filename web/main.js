@@ -337,6 +337,8 @@ let cameraDistance=7.0;
 let cameraHeight=2.2;
 let verticalVelocity=0;
 let grounded=true;
+let jumpQueued=false;
+let jumpQueueTime=0;
 const gravity=-24;
 const jumpSpeed=8.4;
 const playerRadius=.58;
@@ -369,9 +371,12 @@ startButton.addEventListener('click',()=>{
 addEventListener('keydown',e=>{
   if(['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight','Space'].includes(e.code)) e.preventDefault();
   keys.add(e.code);
-  if(e.code==='Space' && started && grounded){
-    verticalVelocity=jumpSpeed;
-    grounded=false;
+
+  // Queue jump input briefly so jump timing is not lost when another movement
+  // key (especially W + Shift) changes state in the same frame.
+  if((e.code==='Space' || e.key===' ') && started){
+    jumpQueued=true;
+    jumpQueueTime=performance.now();
   }
 });
 addEventListener('keyup',e=>keys.delete(e.code));
@@ -419,6 +424,14 @@ function updatePlayer(dt,time){
   }
 
   if(started){
+    if(jumpQueued){
+      if(grounded && performance.now()-jumpQueueTime<180){
+        verticalVelocity=jumpSpeed;
+        grounded=false;
+      }
+      jumpQueued=false;
+    }
+
     verticalVelocity+=gravity*dt;
     const nextY=player.position.y+verticalVelocity*dt;
     if(nextY<=0){

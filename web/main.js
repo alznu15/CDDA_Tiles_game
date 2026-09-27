@@ -283,12 +283,11 @@ const startButton=document.getElementById('start');
 const boot=document.getElementById('boot');
 const status=document.getElementById('status');
 
-startButton.disabled=true;
-loadCharacter().finally(async()=>{
-  await addStreetAssets();
-  startButton.disabled=false;
-  document.getElementById('loading').textContent='Ready.';
-});
+startButton.disabled=false;
+document.getElementById('loading').textContent='Ready.';
+// External assets are optional and must never block entering the game.
+loadCharacter().catch(()=>{});
+addStreetAssets().catch(()=>{});
 
 startButton.addEventListener('click',()=>{
   started=true;

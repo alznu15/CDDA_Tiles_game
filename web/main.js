@@ -288,8 +288,8 @@ async function loadCharacter(){
       characterRoot.scale.setScalar(characterBaseScale);
     }
 
-    // Asset faces backward relative to the gameplay root, so use one fixed visual offset.
-    characterRoot.rotation.y=Math.PI;
+    // The gameplay direction is already correct; align the character model forward with it.
+    characterRoot.rotation.y=0;
 
     // Scaling/rotation can move the model bounds below y=0. Recompute after scaling
     // and lift it so the rendered feet sit exactly on the ground.

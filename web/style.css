@@ -12,3 +12,19 @@
 #inputDiag .diagRecent{margin-top:7px;padding-top:6px;border-top:1px solid #ffffff12;opacity:.7;white-space:nowrap;overflow:hidden}
 
 #inputDiag{display:none}
+
+.hudPanel{position:fixed;z-index:4;pointer-events:none;text-shadow:0 2px 10px #0009}
+.hudKicker{font:700 9px/1 system-ui,sans-serif;letter-spacing:.16em;opacity:.58}
+.hudTitle{margin-top:5px;font:800 16px/1.1 system-ui,sans-serif;letter-spacing:.08em}
+.hudSub{margin-top:5px;font:10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;opacity:.62;letter-spacing:.06em}
+#missionHud{left:22px;top:78px;min-width:230px;padding:9px 12px;border-left:2px solid #d8f2fb55;background:linear-gradient(90deg,#0811169e,transparent);backdrop-filter:blur(4px)}
+#vitalsHud{right:22px;top:20px;width:190px;padding:9px 11px;background:linear-gradient(270deg,#081116a8,transparent);backdrop-filter:blur(4px)}
+.vitRow{display:flex;justify-content:space-between;align-items:center;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em}
+.vitLabel{opacity:.62}.vitValue{font-size:12px}
+.vitBar{height:3px;margin:4px 0 7px;border-radius:99px;background:#ffffff18;overflow:hidden}.vitBar span{display:block;height:100%;width:100%;background:#d8f2fbcc}.healthBar span{background:#e9eef0cc}
+#abilityHud{position:fixed;z-index:4;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:7px;pointer-events:none}
+.abilitySlot{width:48px;height:42px;display:grid;grid-template-columns:12px 1fr;align-items:center;gap:4px;padding:5px;border:1px solid #ffffff20;background:#0811169e;backdrop-filter:blur(6px);box-shadow:0 8px 20px #0004;border-radius:7px}
+.abilitySlot span{font:700 9px/1 ui-monospace,SFMono-Regular,Menlo,monospace;opacity:.5}.abilitySlot b{font:700 15px/1 system-ui,sans-serif;text-align:center;opacity:.45}
+#weaponHud{right:22px;bottom:20px;width:220px;padding:10px 12px;border-right:2px solid #d8f2fb55;background:linear-gradient(270deg,#081116a8,transparent);text-align:right}
+.weaponLabel{font:700 9px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em;opacity:.55}.weaponName{margin-top:4px;font:800 18px/1 system-ui,sans-serif;letter-spacing:.08em}.weaponMeta{margin-top:5px;font:9px/1 ui-monospace,SFMono-Regular,Menlo,monospace;opacity:.48;letter-spacing:.05em}
+@media (max-width:700px){#missionHud{top:72px;left:12px;min-width:190px}.hudTitle{font-size:13px}#vitalsHud{right:12px;width:150px}.controls{font-size:9px}.brand{font-size:15px}.abilitySlot{width:40px;height:36px}.abilitySlot b{font-size:13px}#weaponHud{right:12px;bottom:12px;width:180px}}

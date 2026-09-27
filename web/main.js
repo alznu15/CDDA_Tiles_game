@@ -190,11 +190,94 @@ function buildMap() {
   office(-58, -28, 0);
 
   addBox([42,.18,42],[0,.25,0],MAT.concrete);
-  addCylinder(7,.6,[0,.7,0],MAT.concreteDark,world,32);
-  const fountainWater = new THREE.MeshStandardMaterial({ color:0x5fa8bd, roughness:.18, metalness:.08 });
-  addCylinder(5.15,.08,[0,1.06,0],fountainWater,world,48);
-  addCylinder(.55,2.5,[0,1.6,0],MAT.visor,world,18);
-  for (const p of [[-17,-17],[17,-17],[-17,17],[17,17]]) planter(p[0],p[1],Math.PI/4);
+  const fountain = new THREE.Group();
+  world.add(fountain);
+
+  const basinOuter = new THREE.Mesh(
+    new THREE.CylinderGeometry(9.2, 9.2, .72, 64),
+    MAT.concreteDark
+  );
+  basinOuter.position.y = .68;
+  basinOuter.castShadow = true;
+  basinOuter.receiveShadow = true;
+  fountain.add(basinOuter);
+
+  const basinInner = new THREE.Mesh(
+    new THREE.CylinderGeometry(7.7, 7.7, .48, 64),
+    MAT.concrete
+  );
+  basinInner.position.y = 1.05;
+  basinInner.castShadow = true;
+  basinInner.receiveShadow = true;
+  fountain.add(basinInner);
+
+  const fountainWater = new THREE.MeshStandardMaterial({
+    color:0x4fadc6,
+    roughness:.08,
+    metalness:.16,
+    transparent:true,
+    opacity:.9
+  });
+  const water = new THREE.Mesh(
+    new THREE.CircleGeometry(7.25, 64),
+    fountainWater
+  );
+  water.rotation.x = -Math.PI / 2;
+  water.position.y = 1.31;
+  water.receiveShadow = true;
+  fountain.add(water);
+
+  const innerRing = new THREE.Mesh(
+    new THREE.TorusGeometry(4.35, .18, 10, 64),
+    MAT.concreteDark
+  );
+  innerRing.rotation.x = Math.PI / 2;
+  innerRing.position.y = 1.36;
+  innerRing.castShadow = true;
+  innerRing.receiveShadow = true;
+  fountain.add(innerRing);
+
+  const pedestal = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.15, 1.45, 1.9, 32),
+    MAT.concreteDark
+  );
+  pedestal.position.y = 2.2;
+  pedestal.castShadow = true;
+  pedestal.receiveShadow = true;
+  fountain.add(pedestal);
+
+  const jetMat = new THREE.MeshStandardMaterial({
+    color:0x89e6ff,
+    emissive:0x2b9bb8,
+    emissiveIntensity:1.1,
+    transparent:true,
+    opacity:.72
+  });
+  const jetPositions = [
+    [0, 3.55, 0],
+    [2.25, 2.85, 0],
+    [-2.25, 2.85, 0],
+    [0, 2.85, 2.25],
+    [0, 2.85, -2.25]
+  ];
+  for (const [x,y,z] of jetPositions) {
+    const jet = new THREE.Mesh(
+      new THREE.CylinderGeometry(.16, .28, y - 1.35, 14),
+      jetMat
+    );
+    jet.position.set(x, (y + 1.35) * .5, z);
+    jet.castShadow = true;
+    fountain.add(jet);
+  }
+
+  const crown = new THREE.Mesh(
+    new THREE.TorusGeometry(1.45, .12, 10, 48),
+    MAT.visor
+  );
+  crown.rotation.x = Math.PI / 2;
+  crown.position.y = 3.42;
+  crown.castShadow = true;
+  fountain.add(crown);
 
   for (const p of [[-91,-91],[-84,-58],[-91,48],[-67,93],[91,91],[82,58],[91,-48],[66,-93],[-20,-102],[20,102],[-103,0],[103,0]]) tree(p[0],p[1],.9 + Math.abs((p[0]+p[1])%7)*.025);
   for (const p of [[-103,-88],[-88,82],[90,-86],[102,40],[-64,98],[72,95],[-96,28],[96,-20]]) rock(p[0],p[1],.8+Math.abs((p[0]-p[1])%5)*.08);
@@ -291,7 +374,7 @@ renderer.domElement.addEventListener('pointerdown', () => {
 renderer.domElement.addEventListener('pointermove', (e) => {
   if (!started || document.pointerLockElement !== renderer.domElement) return;
   yaw -= e.movementX * .0028;
-  pitch = THREE.MathUtils.clamp(pitch - e.movementY * .0022, -0.18, .78);
+  pitch = THREE.MathUtils.clamp(pitch + e.movementY * .0022, -0.18, .78);
 });
 document.addEventListener('pointerlockchange', () => {
   if (!started) return;

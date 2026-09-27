@@ -189,104 +189,115 @@ function buildMap() {
   office(58, 30, Math.PI);
   office(-58, -28, 0);
 
-  addBox([42,.18,42],[0,.25,0],MAT.concrete);
+  // Central plaza: one self-contained module, rebuilt from the ground up.
+  const centralPlaza = new THREE.Group();
+  world.add(centralPlaza);
+
+  // Raised floor covers the old road/decor geometry beneath this square.
+  addBox([46,.32,46],[0,.42,0],MAT.concreteDark,centralPlaza);
+  addBox([41.8,.12,41.8],[0,.64,0],MAT.white,centralPlaza);
+
+  // Thick white square frame.
+  addBox([44,.55,1.25],[0,.94,-22.35],MAT.white,centralPlaza);
+  addBox([44,.55,1.25],[0,.94,22.35],MAT.white,centralPlaza);
+  addBox([1.25,.55,44],[-22.35,.94,0],MAT.white,centralPlaza);
+  addBox([1.25,.55,44],[22.35,.94,0],MAT.white,centralPlaza);
+
+  // Plain inset stone surface. No floating blue bars are generated here.
+  const inset = new THREE.Mesh(
+    new THREE.PlaneGeometry(36,36),
+    new THREE.MeshStandardMaterial({color:0xaeb5b7,roughness:.9})
+  );
+  inset.rotation.x = -Math.PI/2;
+  inset.position.y = .715;
+  inset.receiveShadow = true;
+  centralPlaza.add(inset);
+
+  // Fountain.
   const fountain = new THREE.Group();
-  world.add(fountain);
+  centralPlaza.add(fountain);
 
   const basinOuter = new THREE.Mesh(
-    new THREE.CylinderGeometry(9.2, 9.2, .72, 64),
+    new THREE.CylinderGeometry(8.8,8.8,.65,64),
     MAT.concreteDark
   );
-  basinOuter.position.y = .68;
+  basinOuter.position.y = 1.10;
   basinOuter.castShadow = true;
   basinOuter.receiveShadow = true;
   fountain.add(basinOuter);
 
   const basinInner = new THREE.Mesh(
-    new THREE.CylinderGeometry(7.7, 7.7, .48, 64),
-    MAT.concrete
+    new THREE.CylinderGeometry(7.35,7.35,.34,64),
+    MAT.white
   );
-  basinInner.position.y = 1.05;
+  basinInner.position.y = 1.45;
   basinInner.castShadow = true;
   basinInner.receiveShadow = true;
   fountain.add(basinInner);
 
-  const fountainWater = new THREE.MeshStandardMaterial({
-    color:0x4fadc6,
+  const waterMat = new THREE.MeshStandardMaterial({
+    color:0x3f9fbb,
     roughness:.08,
-    metalness:.16,
+    metalness:.12,
     transparent:true,
-    opacity:.9
+    opacity:.94
   });
   const water = new THREE.Mesh(
-    new THREE.CircleGeometry(7.25, 64),
-    fountainWater
+    new THREE.CircleGeometry(6.85,64),
+    waterMat
   );
-  water.rotation.x = -Math.PI / 2;
-  water.position.y = 1.31;
+  water.rotation.x = -Math.PI/2;
+  water.position.y = 1.64;
   water.receiveShadow = true;
   fountain.add(water);
 
-  const innerRing = new THREE.Mesh(
-    new THREE.TorusGeometry(4.35, .18, 10, 64),
-    MAT.concreteDark
-  );
-  innerRing.rotation.x = Math.PI / 2;
-  innerRing.position.y = 1.36;
-  innerRing.castShadow = true;
-  innerRing.receiveShadow = true;
-  fountain.add(innerRing);
-
   const pedestal = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.15, 1.45, 1.9, 32),
+    new THREE.CylinderGeometry(1.25,1.55,1.65,32),
     MAT.concreteDark
   );
-  pedestal.position.y = 2.2;
+  pedestal.position.y = 2.46;
   pedestal.castShadow = true;
   pedestal.receiveShadow = true;
   fountain.add(pedestal);
 
   const jetMat = new THREE.MeshStandardMaterial({
-    color:0x89e6ff,
-    emissive:0x2b9bb8,
-    emissiveIntensity:1.1,
+    color:0x8be8ff,
+    emissive:0x227f9c,
+    emissiveIntensity:.8,
     transparent:true,
-    opacity:.72
+    opacity:.78
   });
-  const jetPositions = [
-    [0, 3.55, 0],
-    [2.25, 2.85, 0],
-    [-2.25, 2.85, 0],
-    [0, 2.85, 2.25],
-    [0, 2.85, -2.25]
-  ];
-  for (const [x,y,z] of jetPositions) {
-    const jet = new THREE.Mesh(
-      new THREE.CylinderGeometry(.16, .28, y - 1.35, 14),
-      jetMat
-    );
-    jet.position.set(x, (y + 1.35) * .5, z);
-    jet.castShadow = true;
-    fountain.add(jet);
-  }
+
+  const mainJet = new THREE.Mesh(
+    new THREE.CylinderGeometry(.18,.28,3.1,16),
+    jetMat
+  );
+  mainJet.position.y = 4.03;
+  mainJet.castShadow = true;
+  fountain.add(mainJet);
 
   const crown = new THREE.Mesh(
-    new THREE.TorusGeometry(1.45, .12, 10, 48),
-    MAT.visor
+    new THREE.TorusGeometry(1.5,.11,10,48),
+    MAT.white
   );
-  crown.rotation.x = Math.PI / 2;
-  crown.position.y = 3.42;
+  crown.rotation.x = Math.PI/2;
+  crown.position.y = 4.05;
   crown.castShadow = true;
   fountain.add(crown);
 
-  for (const p of [[-91,-91],[-84,-58],[-91,48],[-67,93],[91,91],[82,58],[91,-48],[66,-93],[-20,-102],[20,102],[-103,0],[103,0]]) tree(p[0],p[1],.9 + Math.abs((p[0]+p[1])%7)*.025);
-  for (const p of [[-103,-88],[-88,82],[90,-86],[102,40],[-64,98],[72,95],[-96,28],[96,-20]]) rock(p[0],p[1],.8+Math.abs((p[0]-p[1])%5)*.08);
-  for (const p of [[-23,-90],[-23,90],[23,-90],[23,90],[-90,-23],[90,-23],[-90,23],[90,23]]) lamp(p[0],p[1]);
+  // Four low nozzle heads sit directly on the basin; they are not floating bars.
+  const nozzlePositions = [[2.7,0],[-2.7,0],[0,2.7],[0,-2.7]];
+  for (const [x,z] of nozzlePositions) {
+    const nozzle = new THREE.Mesh(
+      new THREE.CylinderGeometry(.28,.34,.34,20),
+      jetMat
+    );
+    nozzle.position.set(x,1.85,z);
+    nozzle.castShadow = true;
+    fountain.add(nozzle);
+  }
 
-  // Removed the old central-area decorative bars at z = ±24.
-  // They were unrelated to the fountain and could appear as floating strips.
-  addBox([22,3,.7],[0,1.6,102],MAT.metal);
-  addBox([6,5,.5],[0,3.0,-102],MAT.accent);
+  collider(0,0,17.5,17.5,.4);
   collider(0, 105, 210, 2, 0);
 }
 buildMap();

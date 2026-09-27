@@ -1,5 +1,50 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js';
-import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/loaders/GLTFLoader.js';
+// Load the 3D engine defensively. A CDN failure must never leave the boot screen
+// silently stuck at "Preparing scene…".
+let THREE = null;
+let GLTFLoader = null;
+const engineSources = [
+  {
+    three: 'https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js',
+    loader: 'https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/loaders/GLTFLoader.js'
+  },
+  {
+    three: 'https://unpkg.com/three@0.186.0/build/three.module.js',
+    loader: 'https://unpkg.com/three@0.186.0/examples/jsm/loaders/GLTFLoader.js?module'
+  },
+  {
+    three: 'https://esm.sh/three@0.186.0?bundle',
+    loader: 'https://esm.sh/three@0.186.0/examples/jsm/loaders/GLTFLoader.js?bundle'
+  }
+];
+
+let engineLoaded = false;
+const engineErrors = [];
+
+for (const source of engineSources) {
+  if (engineLoaded) break;
+  try {
+    const threeModule = await import(source.three);
+    THREE = threeModule;
+    try {
+      const loaderModule = await import(source.loader);
+      GLTFLoader = loaderModule.GLTFLoader || null;
+    } catch (loaderError) {
+      console.warn('Optional GLTFLoader source failed:', source.loader, loaderError);
+    }
+    engineLoaded = true;
+  } catch (engineError) {
+    engineErrors.push(String(engineError));
+  }
+}
+
+if (!engineLoaded) {
+  const loading = document.getElementById('loading');
+  const start = document.getElementById('start');
+  if (loading) loading.textContent = '3D engine failed to load. Check the browser network connection.';
+  if (start) start.disabled = true;
+  console.error('All Three.js engine sources failed:', engineErrors);
+  throw new Error('Three.js could not be loaded from any configured source.');
+}
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8fa9b5);
@@ -162,9 +207,10 @@ function buildMap(){
 buildMap();
 
 const ASSET_ROOT='https://raw.githubusercontent.com/chongdashu/vibejam-starter-pack/main/projects/toonshooter/public/assets/toonshooter/';
-const loader=new GLTFLoader();
+const loader=GLTFLoader ? new GLTFLoader() : null;
 
 async function loadExternalProp(path,targetScale=1){
+  if(!loader) return null;
   try{
     const gltf=await loader.loadAsync(ASSET_ROOT+path);
     const root=gltf.scene;
@@ -215,6 +261,10 @@ function setAction(name,fade=.18){
 
 async function loadCharacter(){
   const loading=document.getElementById('loading');
+  if(!loader){
+    loading.textContent='Character asset skipped; gameplay is available.';
+    return;
+  }
   try{
     loading.textContent='Loading character asset…';
     const gltf=await loader.loadAsync(

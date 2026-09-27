@@ -8,10 +8,32 @@
 </head>
 <body>
   <div id="hud">
-    <div class="brand">CDDA TILES <span>CLEAN 3D REBUILD</span></div>
+    <div class="brand">CDDA TILES <span>FRONTIER DISTRICT</span></div>
     <div class="controls"><b>W A S D</b> MOVE &nbsp; <b>SHIFT</b> SPRINT &nbsp; <b>SPACE</b> JUMP &nbsp; <b>MOUSE</b> LOOK</div>
   </div>
-  <div id="crosshair"></div>
+  <div id="missionHud" class="hudPanel">
+    <div class="hudKicker">CURRENT OBJECTIVE</div>
+    <div class="hudTitle">ENTER THE DISTRICT</div>
+    <div class="hudSub">EXPLORE THE CENTRAL BLOCK</div>
+  </div>
+  <div id="vitalsHud" class="hudPanel">
+    <div class="vitRow"><span class="vitLabel">SHIELD</span><span class="vitValue">100</span></div>
+    <div class="vitBar"><span></span></div>
+    <div class="vitRow"><span class="vitLabel">HEALTH</span><span class="vitValue">100</span></div>
+    <div class="vitBar healthBar"><span></span></div>
+  </div>
+  <div id="abilityHud">
+    <div class="abilitySlot"><span>1</span><b>—</b></div>
+    <div class="abilitySlot"><span>2</span><b>—</b></div>
+    <div class="abilitySlot"><span>3</span><b>—</b></div>
+    <div class="abilitySlot"><span>4</span><b>—</b></div>
+  </div>
+  <div id="weaponHud" class="hudPanel">
+    <div class="weaponLabel">PRIMARY</div>
+    <div class="weaponName">UNARMED</div>
+    <div class="weaponMeta">READY FOR WEAPON SYSTEM</div>
+  </div>
+  <div id="crosshair" aria-hidden="true"></div>
   <div id="inputDiag" aria-label="Keyboard input diagnostic"></div>
   <div id="status"></div>
   <div id="boot" class="overlay">
@@ -30,6 +52,6 @@
     }
   }
   </script>
-  <script type="module" src="./main.js?v=rebuild-9"></script>
+  <script type="module" src="./main.js?v=shoulder-camera-1"></script>
 </body>
 </html>

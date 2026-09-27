@@ -424,11 +424,33 @@ function handleKeyDown(e){
 
 function handleKeyUp(e){
   const code=normalizeCode(e);
+
+  // Some keyboard/browser combinations can fail to expose the initial Space
+  // keydown while W+Shift is held. If Space appears on keyup, use it as a
+  // jump fallback. This path only activates for that exact problematic combo.
+  if(code==='Space' && started && input.w && input.shift && grounded){
+    verticalVelocity=jumpSpeed;
+    grounded=false;
+    jumpRequest=false;
+  }
+
   if(code) setInput(code,false);
 }
 
 addEventListener('keydown',handleKeyDown,false);
 addEventListener('keyup',handleKeyUp,false);
+
+// Additional compatibility path for browsers that expose a printable Space
+// key through beforeinput instead of the expected keyboard event.
+addEventListener('beforeinput',e=>{
+  if(!started || !input.w || !input.shift || !grounded) return;
+  if(e.inputType==='insertText' && (e.data===' ' || e.data===null)){
+    e.preventDefault();
+    verticalVelocity=jumpSpeed;
+    grounded=false;
+    jumpRequest=false;
+  }
+},false);
 
 addEventListener('blur',()=>{
   input.w=input.a=input.s=input.d=input.shift=input.space=false;

@@ -191,7 +191,8 @@ function buildMap() {
 
   addBox([42,.18,42],[0,.25,0],MAT.concrete);
   addCylinder(7,.6,[0,.7,0],MAT.concreteDark,world,32);
-  addCylinder(5.3,.2,[0,1.05,0],MAT.glass,world,32);
+  const fountainWater = new THREE.MeshStandardMaterial({ color:0x5fa8bd, roughness:.18, metalness:.08 });
+  addCylinder(5.15,.08,[0,1.06,0],fountainWater,world,48);
   addCylinder(.55,2.5,[0,1.6,0],MAT.visor,world,18);
   for (const p of [[-17,-17],[17,-17],[-17,17],[17,17]]) planter(p[0],p[1],Math.PI/4);
 
@@ -221,7 +222,7 @@ player.add(model);
 const hips = new THREE.Group(); hips.position.y = 1.15; model.add(hips);
 const pelvis = new THREE.Mesh(new THREE.CapsuleGeometry(.46,.38,5,10), MAT.playerDark); pelvis.scale.set(.95,.72,1); pelvis.castShadow = true; hips.add(pelvis);
 const spine = new THREE.Group(); spine.position.y = .47; hips.add(spine);
-const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.48,.9,6,12), MAT.player); torso.scale.set(1,1.12,.82); torso.castShadow = true; spine.add(torso);
+const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.48,.76,6,12), MAT.player); torso.scale.set(1,1.06,.82); torso.castShadow = true; spine.add(torso);
 const chest = new THREE.Mesh(new THREE.TorusGeometry(.46,.055,8,20), MAT.accent); chest.rotation.x = Math.PI/2; chest.position.y = .25; chest.scale.set(.92,.8,1); chest.castShadow = true; spine.add(chest);
 const neck = new THREE.Mesh(new THREE.CylinderGeometry(.16,.16,.18,10), MAT.playerDark); neck.position.y = .96; neck.castShadow = true; spine.add(neck);
 const head = new THREE.Group(); head.position.y = 1.2; spine.add(head);
@@ -265,11 +266,18 @@ const startButton = document.getElementById('start');
 const boot = document.getElementById('boot');
 const status = document.getElementById('status');
 
+function lockMouse() {
+  if (started && document.pointerLockElement !== renderer.domElement) {
+    renderer.domElement.requestPointerLock?.();
+  }
+}
+
 startButton.addEventListener('click', () => {
   started = true;
   spawnTime = performance.now();
   boot.classList.add('hidden');
-  status.textContent = 'WASD MOVE  •  SHIFT SPRINT  •  CLICK + DRAG LOOK';
+  status.textContent = 'WASD MOVE  •  SHIFT SPRINT  •  MOUSE LOOK  •  ESC RELEASE';
+  lockMouse();
 });
 
 addEventListener('keydown', (e) => {
@@ -277,19 +285,20 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  dragging = true;
-  lastPointer = {x:e.clientX,y:e.clientY};
-  renderer.domElement.setPointerCapture?.(e.pointerId);
+renderer.domElement.addEventListener('pointerdown', () => {
+  if (started) lockMouse();
 });
-renderer.domElement.addEventListener('pointerup', () => { dragging = false; lastPointer = null; });
 renderer.domElement.addEventListener('pointermove', (e) => {
-  if (!dragging || !started || !lastPointer) return;
-  const dx = e.clientX - lastPointer.x;
-  const dy = e.clientY - lastPointer.y;
-  lastPointer = {x:e.clientX,y:e.clientY};
-  yaw -= dx * .006;
-  pitch = THREE.MathUtils.clamp(pitch - dy * .0045, -0.18, .78);
+  if (!started || document.pointerLockElement !== renderer.domElement) return;
+  yaw -= e.movementX * .0028;
+  pitch = THREE.MathUtils.clamp(pitch - e.movementY * .0022, -0.18, .78);
+});
+document.addEventListener('pointerlockchange', () => {
+  if (!started) return;
+  const locked = document.pointerLockElement === renderer.domElement;
+  status.textContent = locked
+    ? 'WASD MOVE  •  SHIFT SPRINT  •  MOUSE LOOK  •  ESC RELEASE'
+    : 'CLICK GAME TO LOCK MOUSE  •  WASD MOVE  •  SHIFT SPRINT';
 });
 addEventListener('wheel', (e) => {
   cameraDistance = THREE.MathUtils.clamp(cameraDistance + e.deltaY * .006, 5.5, 12);
@@ -307,8 +316,8 @@ function updatePlayer(dt, time) {
   const forward = new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
   const right = new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
   const move = new THREE.Vector3();
-  if (keys.has('KeyW')) move.add(forward);
-  if (keys.has('KeyS')) move.sub(forward);
+  if (keys.has('KeyW')) move.sub(forward);
+  if (keys.has('KeyS')) move.add(forward);
   if (keys.has('KeyD')) move.add(right);
   if (keys.has('KeyA')) move.sub(right);
   const moving = move.lengthSq() > 0.0001;

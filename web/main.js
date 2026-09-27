@@ -744,41 +744,6 @@ function getCameraClearDistance(target,desired){
   return THREE.MathUtils.clamp(safeDistance,cameraMinClearance,distance);
 }
 
-function getCameraClearDistance(target,desired){
-  const offset=desired.clone().sub(target);
-  const distance=offset.length();
-  if(distance<=1e-4) return 0;
-
-  const direction=offset.normalize();
-  cameraRay.origin.copy(target);
-  cameraRay.direction.copy(direction);
-
-  let safeDistance=distance;
-
-  for(const c of staticColliders){
-    cameraBox.min.set(
-      c.x-c.w*.5-cameraCollisionRadius,
-      -cameraCollisionRadius,
-      c.z-c.d*.5-cameraCollisionRadius
-    );
-    cameraBox.max.set(
-      c.x+c.w*.5+cameraCollisionRadius,
-      (Number.isFinite(c.h)?c.h:32)+cameraCollisionRadius,
-      c.z+c.d*.5+cameraCollisionRadius
-    );
-
-    const hit=cameraRay.intersectBox(cameraBox,cameraHitPoint);
-    if(hit){
-      const hitDistance=hit.distanceTo(target);
-      if(hitDistance>cameraMinClearance){
-        safeDistance=Math.min(safeDistance,hitDistance-cameraCollisionSkin);
-      }
-    }
-  }
-
-  return THREE.MathUtils.clamp(safeDistance,cameraMinClearance,distance);
-}
-
 function updateCamera(dt){
   const target=new THREE.Vector3(
     player.position.x,

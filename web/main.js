@@ -368,18 +368,30 @@ startButton.addEventListener('click',()=>{
   lockMouse();
 });
 
-addEventListener('keydown',e=>{
-  if(['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight','Space'].includes(e.code)) e.preventDefault();
-  keys.add(e.code);
-
-  // Queue jump input briefly so jump timing is not lost when another movement
-  // key (especially W + Shift) changes state in the same frame.
-  if((e.code==='Space' || e.key===' ') && started){
+function queueJumpFromEvent(e){
+  const isSpace = e.code==='Space' || e.key===' ' || e.key==='Spacebar' || e.which===32 || e.keyCode===32;
+  if(isSpace && started){
     jumpQueued=true;
     jumpQueueTime=performance.now();
   }
-});
-addEventListener('keyup',e=>keys.delete(e.code));
+}
+
+addEventListener('keydown',e=>{
+  if(['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight','Space'].includes(e.code)) e.preventDefault();
+  keys.add(e.code);
+  queueJumpFromEvent(e);
+}, true);
+
+// Some browser/keyboard combinations can expose Space through keypress even
+// when keydown handling is unusual. Keep this as a second input path.
+addEventListener('keypress',e=>{
+  if(e.code==='Space' || e.key===' ' || e.which===32 || e.keyCode===32){
+    e.preventDefault();
+    queueJumpFromEvent(e);
+  }
+}, true);
+
+addEventListener('keyup',e=>keys.delete(e.code), true);
 
 renderer.domElement.addEventListener('pointerdown',()=>{if(started) lockMouse();});
 renderer.domElement.addEventListener('pointermove',e=>{

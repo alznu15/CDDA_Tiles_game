@@ -331,6 +331,12 @@ player.add(spawnRing);
 
 let started=false;
 const keys=new Set();
+const inputDiag={
+  events:[],
+  counts:{keydown:0,keyup:0,keypress:0,spaceKeydown:0,spaceKeypress:0},
+  lastSpace:null,
+  tests:[]
+};
 let yaw=0;
 let pitch=.18;
 let cameraDistance=7.0;
@@ -354,6 +360,31 @@ const startButton=document.getElementById('start');
 const boot=document.getElementById('boot');
 const status=document.getElementById('status');
 
+const inputDiagPanel=document.createElement('div');
+inputDiagPanel.id='input-diag';
+Object.assign(inputDiagPanel.style,{
+  position:'fixed',left:'10px',bottom:'10px',zIndex:'1000',
+  padding:'8px 10px',background:'rgba(0,0,0,.78)',color:'#fff',
+  font:'12px monospace',whiteSpace:'pre',pointerEvents:'none',
+  border:'1px solid rgba(255,255,255,.25)',borderRadius:'6px'
+});
+document.body.appendChild(inputDiagPanel);
+
+function updateInputDiagPanel(){
+  const w=keys.has('KeyW'),a=keys.has('KeyA'),s=keys.has('KeyS'),d=keys.has('KeyD');
+  const sh=keys.has('ShiftLeft')||keys.has('ShiftRight');
+  const sp=keys.has('Space');
+  const ls=inputDiag.lastSpace;
+  inputDiagPanel.textContent=
+    'INPUT DIAG\\n'+
+    `W:${w?'✓':'·'} A:${a?'✓':'·'} S:${s?'✓':'·'} D:${d?'✓':'·'}  Shift:${sh?'✓':'·'}  SpaceHeld:${sp?'✓':'·'}\\n`+
+    `keydown:${inputDiag.counts.keydown} keyup:${inputDiag.counts.keyup} keypress:${inputDiag.counts.keypress}\\n`+
+    `Space events: KD ${inputDiag.counts.spaceKeydown} / KP ${inputDiag.counts.spaceKeypress}\\n`+
+    (ls?`Last Space: ${ls.type} W:${ls.w?'✓':'·'} Shift:${ls.shift?'✓':'·'}\\n`:'Last Space: —\\n')+
+    `W+Shift+Space now: ${w&&sh&&ls&&ls.w&&ls.shift?'TRACKED':'—'}`;
+}
+setInterval(updateInputDiagPanel,100);
+
 startButton.disabled=false;
 document.getElementById('loading').textContent='Ready.';
 // External assets are optional and must never block entering the game.
@@ -368,6 +399,27 @@ startButton.addEventListener('click',()=>{
   lockMouse();
 });
 
+function diagEvent(type,e){
+  const w=keys.has('KeyW') || e.code==='KeyW';
+  const shift=keys.has('ShiftLeft') || keys.has('ShiftRight') || e.code==='ShiftLeft' || e.code==='ShiftRight';
+  const space=e.code==='Space' || e.key===' ' || e.key==='Spacebar' || e.which===32 || e.keyCode===32;
+  inputDiag.counts[type]++;
+  if(space && type==='keydown') inputDiag.counts.spaceKeydown++;
+  if(space && type==='keypress') inputDiag.counts.spaceKeypress++;
+  inputDiag.events.push({
+    type, code:e.code||'', key:e.key||'',
+    w,shift,space,
+    t:Math.round(performance.now())
+  });
+  if(inputDiag.events.length>40) inputDiag.events.shift();
+  if(space){
+    inputDiag.lastSpace={
+      type, code:e.code||'', key:e.key||'', w, shift,
+      t:Math.round(performance.now())
+    };
+  }
+}
+
 function queueJumpFromEvent(e){
   const isSpace = e.code==='Space' || e.key===' ' || e.key==='Spacebar' || e.which===32 || e.keyCode===32;
   if(isSpace && started){
@@ -378,20 +430,74 @@ function queueJumpFromEvent(e){
 
 addEventListener('keydown',e=>{
   if(['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight','Space'].includes(e.code)) e.preventDefault();
+  diagEvent('keydown',e);
   keys.add(e.code);
   queueJumpFromEvent(e);
 }, true);
 
-// Some browser/keyboard combinations can expose Space through keypress even
-// when keydown handling is unusual. Keep this as a second input path.
 addEventListener('keypress',e=>{
+  diagEvent('keypress',e);
   if(e.code==='Space' || e.key===' ' || e.which===32 || e.keyCode===32){
     e.preventDefault();
     queueJumpFromEvent(e);
   }
 }, true);
 
-addEventListener('keyup',e=>keys.delete(e.code), true);
+addEventListener('keyup',e=>{
+  diagEvent('keyup',e);
+  keys.delete(e.code);
+}, true);
+
+function runInputDiagnostics(){
+  const base=()=>({
+    keySet:new Set(),
+    jumpQueued:false,
+    jumpQueueTime:0
+  });
+  const detect=(events)=>{
+    const s=base();
+    let jump=false;
+    for(const ev of events){
+      if(ev.type==='keydown') s.keySet.add(ev.code);
+      if(ev.type==='keyup') s.keySet.delete(ev.code);
+      const space=ev.code==='Space'||ev.key===' '||ev.which===32||ev.keyCode===32;
+      if(space && ev.type==='keydown') jump=true;
+    }
+    return {jump,w:s.keySet.has('KeyW'),shift:s.keySet.has('ShiftLeft')||s.keySet.has('ShiftRight')};
+  };
+
+  const cases=[
+    [['Space','keydown']],
+    [['KeyW','keydown'],['Space','keydown']],
+    [['KeyW','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
+    [['ShiftLeft','keydown'],['KeyW','keydown'],['Space','keydown']],
+    [['KeyW','keydown'],['KeyA','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
+    [['KeyW','keydown'],['KeyD','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
+    [['KeyS','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
+    [['KeyA','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
+    [['KeyD','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
+    [['KeyW','keydown'],['ShiftRight','keydown'],['Space','keydown']]
+  ];
+
+  inputDiag.tests=cases.map((seq,i)=>{
+    const events=seq.map(([code,type])=>({code,key:code==='Space'?' ':code==='ShiftLeft'||code==='ShiftRight'?'Shift':code,type}));
+    const r=detect(events);
+    return {n:i+1,pass:r.jump,keys:seq.map(x=>x[0]).join('+')};
+  });
+
+  const allPass=inputDiag.tests.every(t=>t.pass);
+  console.log('INPUT DIAGNOSTICS — 10 synthetic cases:',inputDiag.tests,'ALL PASS:',allPass);
+
+  window.__INPUT_DIAGNOSTICS__=()=>({
+    counts:{...inputDiag.counts},
+    lastSpace:inputDiag.lastSpace,
+    activeKeys:[...keys],
+    recentEvents:inputDiag.events.slice(-20),
+    syntheticTests:inputDiag.tests,
+    syntheticAllPass:allPass
+  });
+}
+runInputDiagnostics();
 
 renderer.domElement.addEventListener('pointerdown',()=>{if(started) lockMouse();});
 renderer.domElement.addEventListener('pointermove',e=>{

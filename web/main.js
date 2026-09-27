@@ -283,12 +283,8 @@ function buildMap() {
   for (const p of [[-103,-88],[-88,82],[90,-86],[102,40],[-64,98],[72,95],[-96,28],[96,-20]]) rock(p[0],p[1],.8+Math.abs((p[0]-p[1])%5)*.08);
   for (const p of [[-23,-90],[-23,90],[23,-90],[23,90],[-90,-23],[90,-23],[-90,23],[90,23]]) lamp(p[0],p[1]);
 
-  for (let i=-80;i<=80;i+=20) {
-    if (Math.abs(i) > 30) {
-      addBox([.8,.12,1.4],[i,.32,-24],MAT.concreteDark,decor);
-      addBox([.8,.12,1.4],[i,.32,24],MAT.concreteDark,decor);
-    }
-  }
+  // Removed the old central-area decorative bars at z = ±24.
+  // They were unrelated to the fountain and could appear as floating strips.
   addBox([22,3,.7],[0,1.6,102],MAT.metal);
   addBox([6,5,.5],[0,3.0,-102],MAT.accent);
   collider(0, 105, 210, 2, 0);

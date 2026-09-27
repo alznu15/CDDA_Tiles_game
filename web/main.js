@@ -330,64 +330,109 @@ spawnRing.position.y=.025;
 player.add(spawnRing);
 
 let started=false;
-const keys=new Set();
-const inputDiag={
-  events:[],
-  counts:{keydown:0,keyup:0,keypress:0,spaceKeydown:0,spaceKeypress:0},
-  lastSpace:null,
-  tests:[]
-};
-let yaw=0;
-let pitch=.18;
-let cameraDistance=7.0;
-let cameraHeight=2.2;
-let verticalVelocity=0;
-let grounded=true;
-let jumpQueued=false;
-let jumpQueueTime=0;
-const gravity=-24;
-const jumpSpeed=8.4;
-const playerRadius=.58;
-let spawnTime=performance.now();
 
-function lockMouse(){
-  if(started && document.pointerLockElement!==renderer.domElement){
-    renderer.domElement.requestPointerLock?.();
+// Single-source keyboard input driver.
+// No Set, no key-combination inference, and no modifier-dependent jump logic.
+const input={
+  w:false,
+  a:false,
+  s:false,
+  d:false,
+  shift:false,
+  space:false
+};
+let jumpRequest=false;
+let lastSpaceDown=0;
+
+function setInput(code,down){
+  switch(code){
+    case 'KeyW': input.w=down; break;
+    case 'KeyA': input.a=down; break;
+    case 'KeyS': input.s=down; break;
+    case 'KeyD': input.d=down; break;
+    case 'ShiftLeft':
+    case 'ShiftRight':
+      input.shift=down;
+      break;
+    case 'Space':
+      input.space=down;
+      break;
   }
 }
+
+function normalizeCode(e){
+  if(e.code) return e.code;
+  if(e.key==='w'||e.key==='W') return 'KeyW';
+  if(e.key==='a'||e.key==='A') return 'KeyA';
+  if(e.key==='s'||e.key==='S') return 'KeyS';
+  if(e.key==='d'||e.key==='D') return 'KeyD';
+  if(e.key==='Shift') return e.shiftKey ? 'ShiftLeft' : 'ShiftRight';
+  if(e.key===' '||e.key==='Spacebar'||e.which===32||e.keyCode===32) return 'Space';
+  return '';
+}
+
+function requestJump(){
+  jumpRequest=true;
+  lastSpaceDown=performance.now();
+}
+
+function handleKeyDown(e){
+  const code=normalizeCode(e);
+
+  if(code==='Space'){
+    e.preventDefault();
+
+    // Ignore auto-repeat; one physical press = one jump request.
+    if(!e.repeat){
+      setInput('Space',true);
+      requestJump();
+
+      // Immediate jump path. This deliberately does not depend on W,
+      // Shift, movement direction, or the next animation frame.
+      if(started && grounded){
+        verticalVelocity=jumpSpeed;
+        grounded=false;
+        jumpRequest=false;
+      }
+    }
+    return;
+  }
+
+  if(code==='KeyW'||code==='KeyA'||code==='KeyS'||code==='KeyD'||
+     code==='ShiftLeft'||code==='ShiftRight'){
+    setInput(code,true);
+    // Prevent browser shortcuts/scroll only for movement keys.
+    e.preventDefault();
+  }
+}
+
+function handleKeyUp(e){
+  const code=normalizeCode(e);
+  if(code) setInput(code,false);
+}
+
+addEventListener('keydown',handleKeyDown,false);
+addEventListener('keyup',handleKeyUp,false);
+
+addEventListener('blur',()=>{
+  input.w=input.a=input.s=input.d=input.shift=input.space=false;
+  jumpRequest=false;
+});
+
+window.__INPUT_STATE__=()=>({
+  ...input,
+  grounded,
+  verticalVelocity,
+  jumpRequest,
+  lastSpaceDown
+});
 
 const startButton=document.getElementById('start');
 const boot=document.getElementById('boot');
 const status=document.getElementById('status');
 
-const inputDiagPanel=document.createElement('div');
-inputDiagPanel.id='input-diag';
-Object.assign(inputDiagPanel.style,{
-  position:'fixed',left:'10px',bottom:'10px',zIndex:'1000',
-  padding:'8px 10px',background:'rgba(0,0,0,.78)',color:'#fff',
-  font:'12px monospace',whiteSpace:'pre',pointerEvents:'none',
-  border:'1px solid rgba(255,255,255,.25)',borderRadius:'6px'
-});
-document.body.appendChild(inputDiagPanel);
-
-function updateInputDiagPanel(){
-  const w=keys.has('KeyW'),a=keys.has('KeyA'),s=keys.has('KeyS'),d=keys.has('KeyD');
-  const sh=keys.has('ShiftLeft')||keys.has('ShiftRight');
-  const sp=keys.has('Space');
-  const ls=inputDiag.lastSpace;
-  inputDiagPanel.textContent=
-    'INPUT DIAG\\n'+
-    `W:${w?'✓':'·'} A:${a?'✓':'·'} S:${s?'✓':'·'} D:${d?'✓':'·'}  Shift:${sh?'✓':'·'}  SpaceHeld:${sp?'✓':'·'}\\n`+
-    `keydown:${inputDiag.counts.keydown} keyup:${inputDiag.counts.keyup} keypress:${inputDiag.counts.keypress}\\n`+
-    `Space events: KD ${inputDiag.counts.spaceKeydown} / KP ${inputDiag.counts.spaceKeypress}\\n`+
-    (ls?`Last Space: ${ls.type} W:${ls.w?'✓':'·'} Shift:${ls.shift?'✓':'·'}\\n`:'Last Space: —\\n')+
-    `W+Shift+Space now: ${w&&sh&&ls&&ls.w&&ls.shift?'TRACKED':'—'}`;
-}
-setInterval(updateInputDiagPanel,100);
-
 startButton.disabled=false;
 document.getElementById('loading').textContent='Ready.';
-// External assets are optional and must never block entering the game.
 loadCharacter().catch(()=>{});
 addStreetAssets().catch(()=>{});
 
@@ -398,106 +443,6 @@ startButton.addEventListener('click',()=>{
   status.textContent='WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  MOUSE LOOK  •  ESC RELEASE';
   lockMouse();
 });
-
-function diagEvent(type,e){
-  const w=keys.has('KeyW') || e.code==='KeyW';
-  const shift=keys.has('ShiftLeft') || keys.has('ShiftRight') || e.code==='ShiftLeft' || e.code==='ShiftRight';
-  const space=e.code==='Space' || e.key===' ' || e.key==='Spacebar' || e.which===32 || e.keyCode===32;
-  inputDiag.counts[type]++;
-  if(space && type==='keydown') inputDiag.counts.spaceKeydown++;
-  if(space && type==='keypress') inputDiag.counts.spaceKeypress++;
-  inputDiag.events.push({
-    type, code:e.code||'', key:e.key||'',
-    w,shift,space,
-    t:Math.round(performance.now())
-  });
-  if(inputDiag.events.length>40) inputDiag.events.shift();
-  if(space){
-    inputDiag.lastSpace={
-      type, code:e.code||'', key:e.key||'', w, shift,
-      t:Math.round(performance.now())
-    };
-  }
-}
-
-function queueJumpFromEvent(e){
-  const isSpace = e.code==='Space' || e.key===' ' || e.key==='Spacebar' || e.which===32 || e.keyCode===32;
-  if(isSpace && started){
-    jumpQueued=true;
-    jumpQueueTime=performance.now();
-  }
-}
-
-addEventListener('keydown',e=>{
-  if(['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight','Space'].includes(e.code)) e.preventDefault();
-  diagEvent('keydown',e);
-  keys.add(e.code);
-  queueJumpFromEvent(e);
-}, true);
-
-addEventListener('keypress',e=>{
-  diagEvent('keypress',e);
-  if(e.code==='Space' || e.key===' ' || e.which===32 || e.keyCode===32){
-    e.preventDefault();
-    queueJumpFromEvent(e);
-  }
-}, true);
-
-addEventListener('keyup',e=>{
-  diagEvent('keyup',e);
-  keys.delete(e.code);
-}, true);
-
-function runInputDiagnostics(){
-  const base=()=>({
-    keySet:new Set(),
-    jumpQueued:false,
-    jumpQueueTime:0
-  });
-  const detect=(events)=>{
-    const s=base();
-    let jump=false;
-    for(const ev of events){
-      if(ev.type==='keydown') s.keySet.add(ev.code);
-      if(ev.type==='keyup') s.keySet.delete(ev.code);
-      const space=ev.code==='Space'||ev.key===' '||ev.which===32||ev.keyCode===32;
-      if(space && ev.type==='keydown') jump=true;
-    }
-    return {jump,w:s.keySet.has('KeyW'),shift:s.keySet.has('ShiftLeft')||s.keySet.has('ShiftRight')};
-  };
-
-  const cases=[
-    [['Space','keydown']],
-    [['KeyW','keydown'],['Space','keydown']],
-    [['KeyW','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
-    [['ShiftLeft','keydown'],['KeyW','keydown'],['Space','keydown']],
-    [['KeyW','keydown'],['KeyA','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
-    [['KeyW','keydown'],['KeyD','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
-    [['KeyS','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
-    [['KeyA','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
-    [['KeyD','keydown'],['ShiftLeft','keydown'],['Space','keydown']],
-    [['KeyW','keydown'],['ShiftRight','keydown'],['Space','keydown']]
-  ];
-
-  inputDiag.tests=cases.map((seq,i)=>{
-    const events=seq.map(([code,type])=>({code,key:code==='Space'?' ':code==='ShiftLeft'||code==='ShiftRight'?'Shift':code,type}));
-    const r=detect(events);
-    return {n:i+1,pass:r.jump,keys:seq.map(x=>x[0]).join('+')};
-  });
-
-  const allPass=inputDiag.tests.every(t=>t.pass);
-  console.log('INPUT DIAGNOSTICS — 10 synthetic cases:',inputDiag.tests,'ALL PASS:',allPass);
-
-  window.__INPUT_DIAGNOSTICS__=()=>({
-    counts:{...inputDiag.counts},
-    lastSpace:inputDiag.lastSpace,
-    activeKeys:[...keys],
-    recentEvents:inputDiag.events.slice(-20),
-    syntheticTests:inputDiag.tests,
-    syntheticAllPass:allPass
-  });
-}
-runInputDiagnostics();
 
 renderer.domElement.addEventListener('pointerdown',()=>{if(started) lockMouse();});
 renderer.domElement.addEventListener('pointermove',e=>{
@@ -519,15 +464,15 @@ function updatePlayer(dt,time){
   const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
   const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
   const move=new THREE.Vector3();
-  if(keys.has('KeyW')) move.add(forward);
-  if(keys.has('KeyS')) move.sub(forward);
-  if(keys.has('KeyD')) move.add(right);
-  if(keys.has('KeyA')) move.sub(right);
+  if(input.w) move.add(forward);
+  if(input.s) move.sub(forward);
+  if(input.d) move.add(right);
+  if(input.a) move.sub(right);
 
   const moving=move.lengthSq()>1e-5;
   if(moving) move.normalize();
 
-  const sprint=keys.has('ShiftLeft')||keys.has('ShiftRight');
+  const sprint=input.shift;
   const speed=sprint?10.5:6.2;
 
   if(moving && started){
@@ -542,12 +487,13 @@ function updatePlayer(dt,time){
   }
 
   if(started){
-    if(jumpQueued){
-      if(grounded && performance.now()-jumpQueueTime<180){
-        verticalVelocity=jumpSpeed;
-        grounded=false;
-      }
-      jumpQueued=false;
+    // Fallback path for any Space press that arrived while the frame was airborne.
+    if(jumpRequest && grounded && performance.now()-lastSpaceDown<220){
+      verticalVelocity=jumpSpeed;
+      grounded=false;
+      jumpRequest=false;
+    }else if(jumpRequest && performance.now()-lastSpaceDown>=220){
+      jumpRequest=false;
     }
 
     verticalVelocity+=gravity*dt;

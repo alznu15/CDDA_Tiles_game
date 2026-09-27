@@ -330,6 +330,22 @@ spawnRing.position.y=.025;
 player.add(spawnRing);
 
 let started=false;
+let yaw=0;
+let pitch=.18;
+let cameraDistance=7.0;
+let cameraHeight=2.2;
+let verticalVelocity=0;
+let grounded=true;
+const gravity=-24;
+const jumpSpeed=8.4;
+const playerRadius=.58;
+let spawnTime=performance.now();
+
+function lockMouse(){
+  if(started && document.pointerLockElement!==renderer.domElement){
+    renderer.domElement.requestPointerLock?.();
+  }
+}
 
 // Single-source keyboard input driver.
 // No Set, no key-combination inference, and no modifier-dependent jump logic.

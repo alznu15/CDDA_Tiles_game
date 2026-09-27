@@ -360,6 +360,16 @@ const input={
 let jumpRequest=false;
 let lastSpaceDown=0;
 
+// Dedicated W+Shift sprint-jump state machine.
+// This is intentionally separate from the normal jump path.
+const sprintJump={
+  active:false,
+  phase:0,
+  timer:0,
+  lastTrigger:0,
+  cooldown:260
+};
+
 function setInput(code,down){
   switch(code){
     case 'KeyW': input.w=down; break;
@@ -398,17 +408,19 @@ function handleKeyDown(e){
   if(code==='Space'){
     e.preventDefault();
 
-    // Ignore auto-repeat; one physical press = one jump request.
     if(!e.repeat){
-      setInput('Space',true);
-      requestJump();
+      // Dedicated sprint-jump combo gets first priority.
+      if(input.w && input.shift){
+        triggerSprintJump();
+      }else{
+        setInput('Space',true);
+        requestJump();
 
-      // Immediate jump path. This deliberately does not depend on W,
-      // Shift, movement direction, or the next animation frame.
-      if(started && grounded){
-        verticalVelocity=jumpSpeed;
-        grounded=false;
-        jumpRequest=false;
+        if(started && grounded){
+          verticalVelocity=jumpSpeed;
+          grounded=false;
+          jumpRequest=false;
+        }
       }
     }
     return;
@@ -422,6 +434,23 @@ function handleKeyDown(e){
   }
 }
 
+function triggerSprintJump(){
+  if(!started || !input.w || !input.shift || !grounded) return false;
+  const now=performance.now();
+  if(now-sprintJump.lastTrigger<sprintJump.cooldown) return false;
+
+  sprintJump.active=true;
+  sprintJump.phase=0;
+  sprintJump.timer=now;
+  sprintJump.lastTrigger=now;
+
+  verticalVelocity=jumpSpeed;
+  grounded=false;
+  jumpRequest=false;
+  input.space=true;
+  return true;
+}
+
 function handleKeyUp(e){
   const code=normalizeCode(e);
 
@@ -429,9 +458,7 @@ function handleKeyUp(e){
   // keydown while W+Shift is held. If Space appears on keyup, use it as a
   // jump fallback. This path only activates for that exact problematic combo.
   if(code==='Space' && started && input.w && input.shift && grounded){
-    verticalVelocity=jumpSpeed;
-    grounded=false;
-    jumpRequest=false;
+    triggerSprintJump();
   }
 
   if(code) setInput(code,false);
@@ -498,7 +525,19 @@ addEventListener('wheel',e=>{
   cameraDistance=THREE.MathUtils.clamp(cameraDistance+e.deltaY*.006,5.2,10.5);
 },{passive:true});
 
+let sprintJumpComboArmed=false;
+function updateSprintJumpArm(){
+  const combo=input.w && input.shift;
+  if(combo && !sprintJumpComboArmed){
+    sprintJumpComboArmed=true;
+  }
+  if(!combo){
+    sprintJumpComboArmed=false;
+  }
+}
+
 function updatePlayer(dt,time){
+  updateSprintJumpArm();
   const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
   const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
   const move=new THREE.Vector3();
@@ -554,7 +593,16 @@ function updatePlayer(dt,time){
 
   if(mixer) mixer.update(dt);
   if(characterReady){
-    setAction(moving?(sprint?'Run':'Walk'):'Idle',.15);
+    if(sprintJump.active){
+      // Use the dedicated jump animation if the asset provides one; otherwise
+      // retain the sprint/run visual while the physics performs the jump.
+      const jumpAction=actions.Jump||actions.SprintJump||actions.Run;
+      if(jumpAction) setAction(jumpAction,.08);
+      sprintJump.phase=Math.min(1,(performance.now()-sprintJump.timer)/520);
+      if(sprintJump.phase>=1 && grounded) sprintJump.active=false;
+    }else{
+      setAction(moving?(sprint?'Run':'Walk'):'Idle',.15);
+    }
   }
 }
 

@@ -107,7 +107,7 @@ function addBuilding(x,z,w,d,h,mat){
     box(1.8,1.35,.08,px,Math.min(h-1.5, h*.62),frontZ,MAT.glass,g);
     if(i%2===0) box(1.8,1.35,.08,px,Math.min(h-1.5, h*.62),backZ,MAT.glass,g);
   }
-  box(Math.min(6,w*.42),Math.min(3.8,h*.48),.12,0,Math.min(2.1,h*.38),frontZ-.01,MAT.woodish ?? MAT.buildingC,g);
+  box(Math.min(6,w*.42),Math.min(3.8,h*.48),.12,0,Math.min(2.1,h*.38),frontZ-.01,MAT.buildingC,g);
   collider(x,z,w,d,1.2);
 }
 
@@ -157,7 +157,7 @@ function buildMap(){
     [-22,-82],[22,-82],[-22,82],[22,82]
   ]) addTree(p[0],p[1],.9);
 
-  collider(0,0,34,34,.2);
+  // The central plaza is open and traversable.
 }
 buildMap();
 
@@ -198,6 +198,7 @@ player.position.set(0,0,76);
 world.add(player);
 
 let characterRoot=null;
+let characterBaseScale=1;
 let mixer=null;
 let actions={};
 let currentAction=null;
@@ -227,7 +228,7 @@ async function loadCharacter(){
 
     const initialBox=new THREE.Box3().setFromObject(characterRoot);
     const initialHeight=initialBox.max.y-initialBox.min.y;
-    if(initialHeight>0) characterRoot.scale.setScalar(1.82/initialHeight);
+    if(initialHeight>0){ characterBaseScale=1.82/initialHeight; characterRoot.scale.setScalar(characterBaseScale); }
 
     // Asset faces backward relative to the gameplay root, so use one fixed visual offset.
     characterRoot.rotation.y=Math.PI;
@@ -364,9 +365,7 @@ function updatePlayer(dt,time){
 
   const spawnProgress=THREE.MathUtils.clamp((time-spawnTime)/900,0,1);
   const ease=1-Math.pow(1-spawnProgress,3);
-  if(characterRoot){
-    characterRoot.scale.setScalar((1.82/(new THREE.Box3().setFromObject(characterRoot).max.y-new THREE.Box3().setFromObject(characterRoot).min.y || 1))*.999);
-  }
+  if(characterRoot) characterRoot.scale.setScalar(characterBaseScale);
   spawnRing.scale.setScalar(1.2-.2*ease);
   spawnRing.material.opacity=.72*(1-ease);
 

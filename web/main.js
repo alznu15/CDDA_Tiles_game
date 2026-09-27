@@ -104,8 +104,8 @@ const box = (sx,sy,sz,x,y,z,mat,parent=world) => {
   return m;
 };
 
-function collider(x,z,w,d,pad=.7) {
-  staticColliders.push({x,z,w:w+pad,d:d+pad});
+function collider(x,z,w,d,pad=.7,h=32) {
+  staticColliders.push({x,z,w:w+pad,d:d+pad,h});
 }
 
 function isBlocked(x,z,r=.55) {
@@ -153,7 +153,7 @@ function addBuilding(x,z,w,d,h,mat){
     if(i%2===0) box(1.8,1.35,.08,px,Math.min(h-1.5, h*.62),backZ,MAT.glass,g);
   }
   box(Math.min(6,w*.42),Math.min(3.8,h*.48),.12,0,Math.min(2.1,h*.38),frontZ-.01,MAT.buildingC,g);
-  collider(x,z,w,d,1.2);
+  collider(x,z,w,d,1.2,h);
 }
 
 function addTree(x,z,s=1){
@@ -284,7 +284,7 @@ async function loadCharacter(){
     const initialSize=initialBox.getSize(new THREE.Vector3());
     const initialHeight=initialSize.y;
     if(initialHeight>0){
-      characterBaseScale=1.82/initialHeight;
+      characterBaseScale=1.95/initialHeight;
       characterRoot.scale.setScalar(characterBaseScale);
     }
 
@@ -340,8 +340,17 @@ player.add(spawnRing);
 let started=false;
 let yaw=0;
 let pitch=.18;
-let cameraDistance=7.0;
-let cameraHeight=2.2;
+let cameraDistance=4.8;
+const cameraDistanceMin=3.2;
+const cameraDistanceMax=8.5;
+let cameraHeight=1.9;
+const cameraShoulder=1.05;
+const cameraCollisionRadius=.24;
+const cameraCollisionSkin=.16;
+const cameraMinClearance=1.45;
+const cameraRay=new THREE.Ray();
+const cameraBox=new THREE.Box3();
+const cameraHitPoint=new THREE.Vector3();
 let verticalVelocity=0;
 let grounded=true;
 const gravity=-24;
@@ -610,7 +619,7 @@ renderer.domElement.addEventListener('pointerdown',()=>{if(started) lockMouse();
 renderer.domElement.addEventListener('pointermove',e=>{
   if(!started || document.pointerLockElement!==renderer.domElement) return;
   yaw-=e.movementX*.0028;
-  pitch=THREE.MathUtils.clamp(pitch+e.movementY*.0022,-0.18,.78);
+  pitch=THREE.MathUtils.clamp(pitch+e.movementY*.0022,-1.42,1.42);
 });
 document.addEventListener('pointerlockchange',()=>{
   if(!started)return;
@@ -619,7 +628,7 @@ document.addEventListener('pointerlockchange',()=>{
     : 'CLICK GAME TO LOCK MOUSE  •  WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP';
 });
 addEventListener('wheel',e=>{
-  cameraDistance=THREE.MathUtils.clamp(cameraDistance+e.deltaY*.006,5.2,10.5);
+  cameraDistance=THREE.MathUtils.clamp(cameraDistance+e.deltaY*.006,cameraDistanceMin,cameraDistanceMax);
 },{passive:true});
 
 let sprintJumpComboArmed=false;
@@ -700,14 +709,64 @@ function updatePlayer(dt,time){
   }
 }
 
+function getCameraClearDistance(target,desired){
+  const offset=desired.clone().sub(target);
+  const distance=offset.length();
+  if(distance<=1e-4) return 0;
+
+  const direction=offset.normalize();
+  cameraRay.origin.copy(target);
+  cameraRay.direction.copy(direction);
+
+  let safeDistance=distance;
+
+  for(const c of staticColliders){
+    cameraBox.min.set(
+      c.x-c.w*.5-cameraCollisionRadius,
+      -cameraCollisionRadius,
+      c.z-c.d*.5-cameraCollisionRadius
+    );
+    cameraBox.max.set(
+      c.x+c.w*.5+cameraCollisionRadius,
+      (Number.isFinite(c.h)?c.h:32)+cameraCollisionRadius,
+      c.z+c.d*.5+cameraCollisionRadius
+    );
+
+    const hit=cameraRay.intersectBox(cameraBox,cameraHitPoint);
+    if(hit){
+      const hitDistance=hit.distanceTo(target);
+      if(hitDistance>cameraMinClearance){
+        safeDistance=Math.min(safeDistance,hitDistance-cameraCollisionSkin);
+      }
+    }
+  }
+
+  return THREE.MathUtils.clamp(safeDistance,cameraMinClearance,distance);
+}
+
 function updateCamera(dt){
-  const target=new THREE.Vector3(player.position.x,player.position.y+1.12,player.position.z);
+  const target=new THREE.Vector3(
+    player.position.x,
+    player.position.y+1.18,
+    player.position.z
+  );
+
   const horiz=Math.cos(pitch)*cameraDistance;
   const desired=target.clone().add(new THREE.Vector3(
     Math.sin(yaw)*horiz,
     Math.sin(pitch)*cameraDistance+cameraHeight,
     Math.cos(yaw)*horiz
   ));
+
+  const shoulderRight=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
+  desired.addScaledVector(shoulderRight,cameraShoulder);
+
+  const safeDistance=getCameraClearDistance(target,desired);
+  if(safeDistance<desired.distanceTo(target)){
+    const fromTarget=desired.clone().sub(target).normalize();
+    desired.copy(target).addScaledVector(fromTarget,safeDistance);
+  }
+
   camera.position.lerp(desired,1-Math.pow(.001,dt));
   camera.lookAt(target);
 }

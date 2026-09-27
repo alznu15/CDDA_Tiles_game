@@ -276,15 +276,29 @@ async function loadCharacter(){
       if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}
     });
 
+    characterRoot.visible=true;
+    characterRoot.scale.setScalar(1);
+
+    // Normalize against the real rendered bounds, then put the feet exactly on the ground.
     const initialBox=new THREE.Box3().setFromObject(characterRoot);
-    const initialHeight=initialBox.max.y-initialBox.min.y;
-    if(initialHeight>0){ characterBaseScale=1.82/initialHeight; characterRoot.scale.setScalar(characterBaseScale); }
+    const initialSize=initialBox.getSize(new THREE.Vector3());
+    const initialHeight=initialSize.y;
+    if(initialHeight>0){
+      characterBaseScale=1.82/initialHeight;
+      characterRoot.scale.setScalar(characterBaseScale);
+    }
 
     // Asset faces backward relative to the gameplay root, so use one fixed visual offset.
     characterRoot.rotation.y=Math.PI;
-    characterRoot.position.y=0;
+
+    // Scaling/rotation can move the model bounds below y=0. Recompute after scaling
+    // and lift it so the rendered feet sit exactly on the ground.
+    characterRoot.updateMatrixWorld(true);
+    const finalBox=new THREE.Box3().setFromObject(characterRoot);
+    if(Number.isFinite(finalBox.min.y)) characterRoot.position.y=-finalBox.min.y;
 
     player.add(characterRoot);
+    characterRoot.updateMatrixWorld(true);
 
     mixer=new THREE.AnimationMixer(characterRoot);
     for(const clip of gltf.animations){
@@ -296,6 +310,11 @@ async function loadCharacter(){
     setAction('Idle',0);
     characterReady=true;
     loading.textContent='Character ready.';
+    console.log('Character loaded:', {
+      height: (new THREE.Box3().setFromObject(characterRoot).max.y - new THREE.Box3().setFromObject(characterRoot).min.y).toFixed(2),
+      position: characterRoot.position.toArray(),
+      scale: characterRoot.scale.toArray()
+    });
   }catch(err){
     console.error('Character load failed',err);
     loading.textContent='Character asset failed to load; gameplay remains available.';
@@ -461,6 +480,8 @@ window.__GAME_STATE__=()=>({
   grounded,
   characterReady,
   animation:currentAction?currentAction.getClip().name:null,
+  characterPosition:characterRoot?characterRoot.position.toArray():null,
+  characterScale:characterRoot?characterRoot.scale.toArray():null,
   colliders:staticColliders.length,
   worldChildren:world.children.length,
   webgl2:renderer.capabilities.isWebGL2

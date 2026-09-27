@@ -193,7 +193,7 @@ function buildMap() {
   addCylinder(7,.6,[0,.7,0],MAT.concreteDark,world,32);
   addCylinder(5.3,.2,[0,1.05,0],MAT.glass,world,32);
   addCylinder(.55,2.5,[0,1.6,0],MAT.visor,world,18);
-  for (const p of [[-17,-17],[17,-17],[-17,17],[17,17]) planter(p[0],p[1],Math.PI/4);
+  for (const p of [[-17,-17],[17,-17],[-17,17],[17,17]]) planter(p[0],p[1],Math.PI/4);
 
   for (const p of [[-91,-91],[-84,-58],[-91,48],[-67,93],[91,91],[82,58],[91,-48],[66,-93],[-20,-102],[20,102],[-103,0],[103,0]]) tree(p[0],p[1],.9 + Math.abs((p[0]+p[1])%7)*.025);
   for (const p of [[-103,-88],[-88,82],[90,-86],[102,40],[-64,98],[72,95],[-96,28],[96,-20]]) rock(p[0],p[1],.8+Math.abs((p[0]-p[1])%5)*.08);

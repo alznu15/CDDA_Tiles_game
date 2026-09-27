@@ -171,10 +171,13 @@ function planter(x, z, rot = 0) {
 
 function buildMap() {
   createTerrain();
-  road(0, 0, 24, 210); road(0, 0, 210, 24);
+
+  // The entire central vertical strip is intentionally empty for isolation debugging.
+  // This removes its road, lane-marking decorations, and sidewalks as one region.
   road(-78, 0, 16, 118); road(78, 0, 16, 118);
   road(0, -76, 130, 14); road(0, 76, 130, 14);
-  sidewalk(-15, 0, 5, 210); sidewalk(15, 0, 5, 210); sidewalk(0, -15, 210, 5); sidewalk(0, 15, 210, 5);
+
+  sidewalk(0, -15, 210, 5); sidewalk(0, 15, 210, 5);
 
   house(-43, -40, .05, 0);
   house(-43, -5, -.03, 1);
@@ -187,7 +190,7 @@ function buildMap() {
   office(58, 30, Math.PI);
   office(-58, -28, 0);
 
-  // Central plaza/fountain temporarily removed for isolation debugging.
+  // Central plaza/fountain remains removed for isolation debugging.
   collider(0, 105, 210, 2, 0);
 }
 buildMap();
@@ -239,8 +242,6 @@ let yaw = Math.PI;
 let pitch = 0.18;
 let cameraDistance = 8.8;
 let cameraHeight = 4.6;
-let dragging = false;
-let lastPointer = null;
 
 const startButton = document.getElementById('start');
 const boot = document.getElementById('boot');

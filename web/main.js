@@ -58,11 +58,11 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.06;
+renderer.toneMappingExposure = 1.12;
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xd9efff, 0x304139, 1.35));
-const sun = new THREE.DirectionalLight(0xffe7c2, 2.25);
+scene.add(new THREE.HemisphereLight(0xd9efff, 0x304139, 1.65));
+const sun = new THREE.DirectionalLight(0xffe7c2, 2.55);
 sun.position.set(-65, 110, 45);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1536,1536);
@@ -119,7 +119,7 @@ const MAT = {
   buildingB:new THREE.MeshStandardMaterial({color:0x7c96a3,roughness:.91}),
   buildingC:new THREE.MeshStandardMaterial({color:0x8d6e61,roughness:.94}),
   roof:new THREE.MeshStandardMaterial({color:0x3a4145,roughness:.97}),
-  glass:new THREE.MeshPhysicalMaterial({color:0x8dc0d0,roughness:.11,metalness:.16,transparent:true,opacity:.76,transmission:.1,ior:1.45,thickness:.03,clearcoat:.55,clearcoatRoughness:.12}),
+  glass:new THREE.MeshPhysicalMaterial({color:0x72b9d8,roughness:.10,metalness:.20,transparent:true,opacity:.76,transmission:.1,ior:1.45,thickness:.03,clearcoat:.55,clearcoatRoughness:.12}),
   metal:new THREE.MeshStandardMaterial({color:0x657078,roughness:.48,metalness:.65}),
   green:new THREE.MeshStandardMaterial({color:0x2f5536,roughness:1}),
   trunk:new THREE.MeshStandardMaterial({color:0x584536,roughness:1}),
@@ -199,7 +199,7 @@ function isBlocked(x,z,r=.55,feetY=0,airborne=false) {
     if(c.passable && c.passable(x,z)) continue;
 
     // While airborne, low cover can be jumped. Tall building volumes still block.
-    if(airborne && Number.isFinite(c.h) && c.h < feetY + .34) continue;
+    if(airborne && Number.isFinite(c.h) && c.h < feetY - .18) continue;
 
     if(c.shape==='circle'){
       const dx=x-c.x;
@@ -247,12 +247,52 @@ function addSidewalk(x,z,w,d){
   world.add(edge);
 }
 
+function facadeWearMaterial(baseMat,seed){
+  const mat=baseMat.clone();
+  const canvas=document.createElement('canvas');
+  canvas.width=256; canvas.height=256;
+  const ctx=canvas.getContext('2d');
+  const base=baseMat.color.getHexString();
+  ctx.fillStyle='#'+base;
+  ctx.fillRect(0,0,256,256);
+
+  // Subtle paint variation: broad faded areas + tiny scratches, not decorative stripes.
+  let s=Math.abs(Math.floor(seed*1000003))>>>0;
+  const rnd=()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; };
+  for(let i=0;i<34;i++){
+    const x=rnd()*256, y=rnd()*256;
+    const w=10+rnd()*58, h=3+rnd()*18;
+    const light=rnd()>.5;
+    const a=.035+rnd()*.07;
+    ctx.fillStyle=light?('rgba(255,255,255,'+a+')'):('rgba(25,25,25,'+a+')');
+    ctx.fillRect(x,y,w,h);
+  }
+  for(let i=0;i<46;i++){
+    const x=rnd()*256, y=rnd()*256;
+    ctx.strokeStyle='rgba(35,35,35,'+(0.035+rnd()*.075)+')';
+    ctx.lineWidth=.4+rnd()*1.2;
+    ctx.beginPath();
+    ctx.moveTo(x,y);
+    ctx.lineTo(x+3+rnd()*16,y+(rnd()-.5)*2);
+    ctx.stroke();
+  }
+  const tex=new THREE.CanvasTexture(canvas);
+  tex.wrapS=THREE.RepeatWrapping;
+  tex.wrapT=THREE.RepeatWrapping;
+  tex.repeat.set(1,1);
+  tex.colorSpace=THREE.SRGBColorSpace;
+  mat.map=tex;
+  mat.needsUpdate=true;
+  return mat;
+}
+
 function addBuilding(x,z,w,d,h,mat){
   const g=new THREE.Group();
   g.position.set(x,0,z);
   world.add(g);
 
-  box(w,h,d,0,h/2,0,mat,g);
+  const facadeMat=facadeWearMaterial(mat,x*0.73+z*1.17+w*2.1+d*.37);
+  box(w,h,d,0,h/2,0,facadeMat,g);
 
   // Mixed facade treatment: every building gets a plinth, corner strips and
   // one secondary material so the district does not read as cloned boxes.
@@ -269,8 +309,8 @@ function addBuilding(x,z,w,d,h,mat){
   // Roof silhouette varies by building instead of cloning the same cube.
   const styleIndex=Math.abs(Math.round(x*.13+z*.07))%3;
   if(styleIndex===1){
-    const roofA=box(w+.55,.28,d*.62,0,h+.47,-d*.16,MAT.roof,g);
-    const roofB=box(w+.55,.28,d*.62,0,h+.47,d*.16,MAT.roof,g);
+    const roofA=box(w+.55,.34,d*.72,0,h+.22,-d*.17,MAT.roof,g);
+    const roofB=box(w+.55,.34,d*.72,0,h+.22,d*.17,MAT.roof,g);
     roofA.rotation.x=-.30;
     roofB.rotation.x=.30;
   }else if(styleIndex===2){
@@ -343,7 +383,7 @@ function addBuilding(x,z,w,d,h,mat){
   plaque.castShadow=true;
   g.add(plaque);
 
-  collider(x,z,w,d,.28,h);
+  collider(x,z,w,d,.28,h+1.15);
 }
 
 function addTree(x,z,s=1){
@@ -442,6 +482,11 @@ function addParkBench(x,z,rot=0){
 
   box(4.5,.28,.92,0,.22,0,MAT.wood,g);
   box(3.75,.92,.18,0,.58,-.35,MAT.wood,g);
+  {
+    const c=Math.cos(rot),s=Math.sin(rot);
+    const bx=x+(-.35)*s, bz=z+(-.35)*c;
+    orientedCollider(bx,bz,3.75,.18,.92,rot,.06);
+  }
   box(.16,.55,.64,-1.55,-.02,.16,MAT.stone,g);
   box(.16,.55,.64,1.55,-.02,.16,MAT.stone,g);
 
@@ -1382,6 +1427,7 @@ function buildMap(){
   addParkPath(60,0,28,9,.19);
 
   // Four broad pedestrian crossings connect the park gates to the ring road.
+  // Keep the raised lamp/furniture strip outside this crossing footprint.
   for(const [cx,cz,horizontal] of [[0,-84,true],[0,84,true],[-84,0,false],[84,0,false]]){
     for(let i=-4;i<=4;i++){
       if(horizontal) box(1.6,.014,.55,cx+i*2,.155,cz,MAT.white);
@@ -1501,10 +1547,10 @@ async function addStreetAssets(){
   if(!template) return;
 
   const points=[
-    [-74,-72],[-24,-72],[24,-72],[74,-72],
-    [-74,72],[-24,72],[24,72],[74,72],
-    [-72,-74],[-72,-24],[-72,24],[-72,74],
-    [72,-74],[72,-24],[72,24],[72,74],
+    [-79,-72],[-24,-72],[24,-72],[79,-72],
+    [-79,72],[-24,72],[24,72],[79,72],
+    [-72,-79],[-72,-24],[-72,24],[-72,79],
+    [72,-79],[72,-24],[72,24],[72,79],
     [-132,-108],[-132,108],[132,-108],[132,108]
   ];
 

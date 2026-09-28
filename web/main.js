@@ -1975,6 +1975,13 @@ function makeWeapon(){
   box(.12,.12,1.04,0,.02,1.28,metal,weaponRoot);
   box(.18,.32,.30,0,-.18,-.42,polymer,weaponRoot);
   box(.16,.36,.28,0,-.17,.02,dark,weaponRoot);
+
+  // Dedicated forward foregrip: a real weapon component for the left hand.
+  // The left-hand socket is centered inside this part, so changing the weapon
+  // mesh later does not require changing the character rig.
+  const foregrip=box(.14,.34,.20,0,-.20,.54,polymer,weaponRoot);
+  foregrip.rotation.x=-.10;
+
   box(.11,.11,.24,0,.14,.36,metal,weaponRoot);
   box(.08,.10,.18,0,.18,.64,metal,weaponRoot);
 
@@ -2005,7 +2012,7 @@ function makeWeapon(){
   weaponSockets.leftGrip=new THREE.Object3D();
   weaponSockets.leftGrip.name='LeftGrip';
   // Forward support hand belongs on the physical foregrip.
-  weaponSockets.leftGrip.position.set(0,-.17,.02);
+  weaponSockets.leftGrip.position.set(0,-.20,.54);
   weaponSockets.leftGrip.userData.role='support_hand';
   weaponRoot.add(weaponSockets.leftGrip);
 

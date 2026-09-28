@@ -1868,6 +1868,7 @@ let actions={};
 let currentAction=null;
 let characterReady=false;
 
+
 let weaponRoot=null;
 let muzzleFlash=null;
 let muzzlePoint=null;
@@ -1881,9 +1882,36 @@ let ammo=120;
 let lastShotTime=0;
 let fireAccumulator=0;
 
+function hideBuiltInWeapons(root){
+  const hiddenNames=new Set([
+    'AK','GrenadeLauncher','Pistol','Revolver','Revolver_Small',
+    'RocketLauncher','ShortCannon','Shotgun','Shovel','SMG','Sniper','Sniper_2'
+  ]);
+  root.traverse(o=>{
+    if(o.isMesh && hiddenNames.has(o.name)) o.visible=false;
+  });
+}
+
+function collectAimBones(){
+  aimBones={
+    shoulderR:null,upperR:null,lowerR:null,
+    shoulderL:null,upperL:null,lowerL:null
+  };
+  characterRoot?.traverse(o=>{
+    if(!o.isBone) return;
+    if(o.name==='Shoulder.R') aimBones.shoulderR=o;
+    else if(o.name==='UpperArm.R') aimBones.upperR=o;
+    else if(o.name==='LowerArm.R') aimBones.lowerR=o;
+    else if(o.name==='Shoulder.L') aimBones.shoulderL=o;
+    else if(o.name==='UpperArm.L') aimBones.upperL=o;
+    else if(o.name==='LowerArm.L') aimBones.lowerL=o;
+  });
+}
+
 function makeWeapon(){
   if(weaponInitialized || !characterRoot) return;
   weaponInitialized=true;
+  collectAimBones();
 
   const metal=new THREE.MeshStandardMaterial({color:0x1f2529,roughness:.42,metalness:.72});
   const dark=new THREE.MeshStandardMaterial({color:0x101418,roughness:.58,metalness:.38});
@@ -1891,7 +1919,11 @@ function makeWeapon(){
 
   weaponRoot=new THREE.Group();
   weaponRoot.name='AR-01 Carbine';
-  player.add(weaponRoot);
+
+  const weaponParent=aimBones.lowerR || characterRoot;
+  weaponParent.add(weaponRoot);
+  if(aimBones.lowerR) weaponRoot.position.set(0,.37,.02);
+  else weaponRoot.position.set(.30,1.16,.05);
 
   box(.34,.25,.78,0,0,-.05,metal,weaponRoot);
   box(.18,.18,.52,0,.025,.58,dark,weaponRoot);
@@ -1902,8 +1934,7 @@ function makeWeapon(){
   box(.08,.10,.18,0,.18,-.55,metal,weaponRoot);
 
   const muzzle=new THREE.Mesh(
-    new THREE.CylinderGeometry(.055,.055,.12,10),
-    dark
+    new THREE.CylinderGeometry(.055,.055,.12,10),dark
   );
   muzzle.rotation.x=Math.PI/2;
   muzzle.position.set(0,.015,-1.38);
@@ -1912,7 +1943,10 @@ function makeWeapon(){
 
   muzzleFlash=new THREE.Mesh(
     new THREE.ConeGeometry(.13,.38,8),
-    new THREE.MeshBasicMaterial({color:0xffe8a0,transparent:true,opacity:.92,depthWrite:false,side:THREE.DoubleSide})
+    new THREE.MeshBasicMaterial({
+      color:0xffe8a0,transparent:true,opacity:.92,
+      depthWrite:false,side:THREE.DoubleSide
+    })
   );
   muzzleFlash.rotation.x=Math.PI/2;
   muzzleFlash.position.set(0,.015,-1.60);
@@ -1922,16 +1956,6 @@ function makeWeapon(){
   muzzlePoint=new THREE.Object3D();
   muzzlePoint.position.set(0,.015,-1.78);
   weaponRoot.add(muzzlePoint);
-
-  aimBones={torso:null,upperR:null,lowerR:null,upperL:null,lowerL:null};
-  characterRoot.traverse(o=>{
-    if(!o.isBone) return;
-    if(o.name==='Torso') aimBones.torso=o;
-    else if(o.name==='UpperArm.R') aimBones.upperR=o;
-    else if(o.name==='LowerArm.R') aimBones.lowerR=o;
-    else if(o.name==='UpperArm.L') aimBones.upperL=o;
-    else if(o.name==='LowerArm.L') aimBones.lowerL=o;
-  });
 
   const name=document.querySelector('.weaponName');
   const meta=document.querySelector('.weaponMeta');
@@ -1952,32 +1976,46 @@ function applyAimPose(weight){
 
   const pose=(bone,rx,ry,rz)=>{
     if(!bone) return;
-    const q=new THREE.Quaternion().setFromEuler(
+    const base=bone.quaternion.clone();
+    const offset=new THREE.Quaternion().setFromEuler(
       new THREE.Euler(rx*weight,ry*weight,rz*weight,'XYZ')
     );
-    bone.quaternion.multiply(q);
+    const target=base.clone().multiply(offset);
+    bone.quaternion.copy(base).slerp(target,Math.min(1,weight)).normalize();
   };
 
-  pose(aimBones.torso,-0.10,0.035,0);
-  pose(aimBones.upperR,-0.72,0,-0.28);
-  pose(aimBones.lowerR,-0.92,0,0.18);
-  pose(aimBones.upperL,-0.72,0,0.28);
-  pose(aimBones.lowerL,-0.84,0,-0.18);
+  pose(aimBones.shoulderR,-0.22,0,-0.18);
+  pose(aimBones.upperR,-0.88,0,-0.28);
+  pose(aimBones.lowerR,-1.00,0,0.12);
+  pose(aimBones.shoulderL,-0.18,0,0.18);
+  pose(aimBones.upperL,-0.92,0,0.28);
+  pose(aimBones.lowerL,-0.96,0,-0.12);
+}
+
+function getAimDirection(){
+  const dir=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  if(aimWeight>0.001){
+    const cameraDir=new THREE.Vector3();
+    camera.getWorldDirection(cameraDir);
+    dir.lerp(cameraDir,aimWeight).normalize();
+  }
+  return dir.normalize();
 }
 
 function updateWeaponState(dt){
   if(weaponRoot){
-    const hipPos=new THREE.Vector3(.42,1.22,-.38);
-    const aimPos=new THREE.Vector3(.18,1.38,-.62);
-    weaponRoot.position.lerpVectors(hipPos,aimPos,aimWeight);
+    const dir=getAimDirection();
+    const desiredWorldQ=new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0,0,-1),dir
+    );
+    const parentQ=new THREE.Quaternion();
+    weaponRoot.parent.getWorldQuaternion(parentQ);
+    parentQ.invert();
+    const desiredLocalQ=parentQ.multiply(desiredWorldQ);
 
-    const localYaw=(yaw-player.rotation.y)*aimWeight;
-    const targetX=THREE.MathUtils.lerp(-0.12,-pitch*.72,aimWeight);
-    const targetZ=THREE.MathUtils.lerp(-0.16,0.02,aimWeight);
-    weaponRoot.rotation.set(targetX,localYaw-recoilYaw,targetZ);
-
-    weaponRoot.position.x+=recoilKick*.012;
-    weaponRoot.position.y-=recoilKick*.008;
+    weaponRoot.quaternion.slerp(desiredLocalQ,Math.min(1,dt*22)).normalize();
+    const baseGripZ=aimBones?.lowerR ? .02 : .05;
+    weaponRoot.position.z=baseGripZ+recoilKick*.022;
   }
 
   if(muzzleFlash){
@@ -1986,7 +2024,7 @@ function updateWeaponState(dt){
   }
 
   updateAimVisual(aimWeight);
-  recoilKick=Math.max(0,recoilKick-dt*7.5);
+  recoilKick=Math.max(0,recoilKick-dt*8.5);
   recoilYaw=THREE.MathUtils.damp(recoilYaw,0,12,dt);
   recoilPitch=THREE.MathUtils.damp(recoilPitch,0,12,dt);
 }
@@ -1994,7 +2032,6 @@ function updateWeaponState(dt){
 function raycastStatic(origin,direction,maxDistance=260){
   cameraRay.origin.copy(origin);
   cameraRay.direction.copy(direction).normalize();
-
   let best=maxDistance;
   const hit=new THREE.Vector3();
 
@@ -2003,30 +2040,20 @@ function raycastStatic(origin,direction,maxDistance=260){
     const halfD=c.shape==='circle'?c.radius:c.d*.5;
     const baseY=Number.isFinite(c.baseY)?c.baseY:0;
     const topY=baseY+(Number.isFinite(c.h)?c.h:32);
-
     cameraBox.min.set(c.x-halfW,baseY,c.z-halfD);
     cameraBox.max.set(c.x+halfW,topY,c.z+halfD);
-
     const p=cameraRay.intersectBox(cameraBox,hit);
     if(!p) continue;
-
     const d=p.distanceTo(origin);
     if(d>.05&&d<best) best=d;
   }
-
-  return {
-    distance:best,
-    point:origin.clone().addScaledVector(direction,best)
-  };
+  return {distance:best,point:origin.clone().addScaledVector(direction,best)};
 }
 
 function spawnTracer(origin,point){
   const geometry=new THREE.BufferGeometry().setFromPoints([origin,point]);
   const material=new THREE.LineBasicMaterial({
-    color:0xffd38a,
-    transparent:true,
-    opacity:.9,
-    depthWrite:false
+    color:0xffd38a,transparent:true,opacity:.9,depthWrite:false
   });
   const line=new THREE.Line(geometry,material);
   world.add(line);
@@ -2041,10 +2068,7 @@ function spawnImpact(point){
   const impact=new THREE.Mesh(
     new THREE.SphereGeometry(.055,6,6),
     new THREE.MeshBasicMaterial({
-      color:0xffd76d,
-      transparent:true,
-      opacity:.95,
-      depthWrite:false
+      color:0xffd76d,transparent:true,opacity:.95,depthWrite:false
     })
   );
   impact.position.copy(point);
@@ -2058,7 +2082,6 @@ function spawnImpact(point){
 
 function fireWeapon(){
   if(!started||!weaponRoot) return;
-
   const now=performance.now();
   if(now-lastShotTime<88||ammo<=0) return;
 
@@ -2071,7 +2094,6 @@ function fireWeapon(){
   const origin=camera.position.clone();
   const direction=new THREE.Vector3();
   camera.getWorldDirection(direction);
-
   const hit=raycastStatic(origin,direction,260);
   const muzzleWorld=muzzlePoint.getWorldPosition(new THREE.Vector3());
 
@@ -2104,6 +2126,7 @@ async function loadCharacter(){
     );
 
     characterRoot=gltf.scene;
+    hideBuiltInWeapons(characterRoot);
     characterRoot.traverse(o=>{
       if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}
     });
@@ -2529,7 +2552,7 @@ function updatePlayer(dt,time){
   const speed=input.aim ? (sprint?8.2:4.9) : (sprint?10.5:6.2);
 
   if(input.aim && started){
-    const targetYaw=yaw;
+    const targetYaw=yaw+Math.PI;
     const diff=THREE.MathUtils.euclideanModulo(targetYaw-player.rotation.y+Math.PI,Math.PI*2)-Math.PI;
     player.rotation.y+=diff*Math.min(1,dt*18);
   }

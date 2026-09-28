@@ -1210,7 +1210,7 @@ function buildMap(){
   // Four broad pedestrian crossings connect the park gates to the ring road.
   for(const [cx,cz,horizontal] of [[0,-84,true],[0,84,true],[-84,0,false],[84,0,false]]){
     for(let i=-4;i<=4;i++){
-      if(horizontal) box(1.6,.014,.55,cx+i*2,cz,7.0<8?MAT.white:MAT.white);
+      if(horizontal) box(1.6,.014,.55,cx+i*2,.155,cz,MAT.white);
       else box(.55,.014,1.6,cx,cz+i*2,MAT.white);
     }
   }

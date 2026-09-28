@@ -10,5 +10,377 @@
     "run",
     "grasp"
   ],
-  "notes": "Cloud-acquired, self-contained GLB. No extra decoder required."
+  "notes": "Cloud-acquired, self-contained GLB. No extra decoder required.",
+  "skeletonNodes": [
+    {
+      "index": 1,
+      "name": "scout:root",
+      "parent": 0
+    },
+    {
+      "index": 2,
+      "name": "scout:spine05",
+      "parent": 1
+    },
+    {
+      "index": 3,
+      "name": "scout:spine04",
+      "parent": 2
+    },
+    {
+      "index": 4,
+      "name": "scout:spine03",
+      "parent": 3
+    },
+    {
+      "index": 5,
+      "name": "scout:spine02",
+      "parent": 4
+    },
+    {
+      "index": 6,
+      "name": "scout:spine01",
+      "parent": 5
+    },
+    {
+      "index": 7,
+      "name": "scout:clavicle.L",
+      "parent": 6
+    },
+    {
+      "index": 8,
+      "name": "scout:clavicle.R",
+      "parent": 6
+    },
+    {
+      "index": 9,
+      "name": "scout:shoulder01.L",
+      "parent": 7
+    },
+    {
+      "index": 10,
+      "name": "scout:upperarm01.L",
+      "parent": 9
+    },
+    {
+      "index": 11,
+      "name": "scout:upperarm02.L",
+      "parent": 10
+    },
+    {
+      "index": 12,
+      "name": "scout:lowerarm01.L",
+      "parent": 11
+    },
+    {
+      "index": 13,
+      "name": "scout:lowerarm02.L",
+      "parent": 12
+    },
+    {
+      "index": 14,
+      "name": "scout:wrist.L",
+      "parent": 13
+    },
+    {
+      "index": 15,
+      "name": "scout:finger1-1.L",
+      "parent": 14
+    },
+    {
+      "index": 16,
+      "name": "scout:shoulder01.R",
+      "parent": 8
+    },
+    {
+      "index": 17,
+      "name": "scout:upperarm01.R",
+      "parent": 16
+    },
+    {
+      "index": 18,
+      "name": "scout:upperarm02.R",
+      "parent": 17
+    },
+    {
+      "index": 19,
+      "name": "scout:lowerarm01.R",
+      "parent": 18
+    },
+    {
+      "index": 20,
+      "name": "scout:lowerarm02.R",
+      "parent": 19
+    },
+    {
+      "index": 21,
+      "name": "scout:wrist.R",
+      "parent": 20
+    },
+    {
+      "index": 22,
+      "name": "scout:finger1-1.R",
+      "parent": 21
+    },
+    {
+      "index": 23,
+      "name": "scout:finger1-2.L",
+      "parent": 15
+    },
+    {
+      "index": 24,
+      "name": "scout:finger1-2.R",
+      "parent": 22
+    },
+    {
+      "index": 25,
+      "name": "scout:finger1-3.L",
+      "parent": 23
+    },
+    {
+      "index": 26,
+      "name": "scout:finger1-3.R",
+      "parent": 24
+    },
+    {
+      "index": 27,
+      "name": "scout:metacarpal1.L",
+      "parent": 14
+    },
+    {
+      "index": 28,
+      "name": "scout:finger2-1.L",
+      "parent": 27
+    },
+    {
+      "index": 29,
+      "name": "scout:metacarpal1.R",
+      "parent": 21
+    },
+    {
+      "index": 30,
+      "name": "scout:finger2-1.R",
+      "parent": 29
+    },
+    {
+      "index": 31,
+      "name": "scout:finger2-2.L",
+      "parent": 28
+    },
+    {
+      "index": 32,
+      "name": "scout:finger2-2.R",
+      "parent": 30
+    },
+    {
+      "index": 33,
+      "name": "scout:finger2-3.L",
+      "parent": 31
+    },
+    {
+      "index": 34,
+      "name": "scout:finger2-3.R",
+      "parent": 32
+    },
+    {
+      "index": 35,
+      "name": "scout:metacarpal2.L",
+      "parent": 14
+    },
+    {
+      "index": 36,
+      "name": "scout:finger3-1.L",
+      "parent": 35
+    },
+    {
+      "index": 37,
+      "name": "scout:metacarpal2.R",
+      "parent": 21
+    },
+    {
+      "index": 38,
+      "name": "scout:finger3-1.R",
+      "parent": 37
+    },
+    {
+      "index": 39,
+      "name": "scout:finger3-2.L",
+      "parent": 36
+    },
+    {
+      "index": 40,
+      "name": "scout:finger3-2.R",
+      "parent": 38
+    },
+    {
+      "index": 41,
+      "name": "scout:finger3-3.L",
+      "parent": 39
+    },
+    {
+      "index": 42,
+      "name": "scout:finger3-3.R",
+      "parent": 40
+    },
+    {
+      "index": 43,
+      "name": "scout:metacarpal3.L",
+      "parent": 14
+    },
+    {
+      "index": 44,
+      "name": "scout:finger4-1.L",
+      "parent": 43
+    },
+    {
+      "index": 45,
+      "name": "scout:metacarpal3.R",
+      "parent": 21
+    },
+    {
+      "index": 46,
+      "name": "scout:finger4-1.R",
+      "parent": 45
+    },
+    {
+      "index": 47,
+      "name": "scout:finger4-2.L",
+      "parent": 44
+    },
+    {
+      "index": 48,
+      "name": "scout:finger4-2.R",
+      "parent": 46
+    },
+    {
+      "index": 49,
+      "name": "scout:finger4-3.L",
+      "parent": 47
+    },
+    {
+      "index": 50,
+      "name": "scout:finger4-3.R",
+      "parent": 48
+    },
+    {
+      "index": 51,
+      "name": "scout:metacarpal4.L",
+      "parent": 14
+    },
+    {
+      "index": 52,
+      "name": "scout:finger5-1.L",
+      "parent": 51
+    },
+    {
+      "index": 53,
+      "name": "scout:metacarpal4.R",
+      "parent": 21
+    },
+    {
+      "index": 54,
+      "name": "scout:finger5-1.R",
+      "parent": 53
+    },
+    {
+      "index": 55,
+      "name": "scout:finger5-2.L",
+      "parent": 52
+    },
+    {
+      "index": 56,
+      "name": "scout:finger5-2.R",
+      "parent": 54
+    },
+    {
+      "index": 57,
+      "name": "scout:finger5-3.L",
+      "parent": 55
+    },
+    {
+      "index": 58,
+      "name": "scout:finger5-3.R",
+      "parent": 56
+    },
+    {
+      "index": 59,
+      "name": "scout:pelvis.L",
+      "parent": 1
+    },
+    {
+      "index": 60,
+      "name": "scout:upperleg01.L",
+      "parent": 59
+    },
+    {
+      "index": 61,
+      "name": "scout:upperleg02.L",
+      "parent": 60
+    },
+    {
+      "index": 62,
+      "name": "scout:lowerleg01.L",
+      "parent": 61
+    },
+    {
+      "index": 63,
+      "name": "scout:lowerleg02.L",
+      "parent": 62
+    },
+    {
+      "index": 64,
+      "name": "scout:foot.L",
+      "parent": 63
+    },
+    {
+      "index": 65,
+      "name": "scout:pelvis.R",
+      "parent": 1
+    },
+    {
+      "index": 66,
+      "name": "scout:upperleg01.R",
+      "parent": 65
+    },
+    {
+      "index": 67,
+      "name": "scout:upperleg02.R",
+      "parent": 66
+    },
+    {
+      "index": 68,
+      "name": "scout:lowerleg01.R",
+      "parent": 67
+    },
+    {
+      "index": 69,
+      "name": "scout:lowerleg02.R",
+      "parent": 68
+    },
+    {
+      "index": 70,
+      "name": "scout:foot.R",
+      "parent": 69
+    },
+    {
+      "index": 71,
+      "name": "scout:neck01",
+      "parent": 6
+    },
+    {
+      "index": 72,
+      "name": "scout:neck02",
+      "parent": 71
+    },
+    {
+      "index": 73,
+      "name": "scout:neck03",
+      "parent": 72
+    },
+    {
+      "index": 74,
+      "name": "scout:head",
+      "parent": 73
+    }
+  ]
 }

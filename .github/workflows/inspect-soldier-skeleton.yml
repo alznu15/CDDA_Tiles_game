@@ -1,0 +1,47 @@
+name: inspect-soldier-skeleton
+on:
+  push:
+    paths:
+      - .github/workflows/inspect-soldier-skeleton.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect GLB skeleton
+        run: |
+          python3 - <<'PY'
+          import json, struct, pathlib
+          glb=pathlib.Path("web/assets/player/CDDA_SciFi_Soldier_Generated.glb").read_bytes()
+          magic,version,length=struct.unpack_from("<4sII",glb,0)
+          pos=12; js=None
+          while pos+8<=len(glb):
+              n,typ=struct.unpack_from("<I4s",glb,pos); pos+=8
+              data=glb[pos:pos+n]; pos+=n
+              if typ==b'JSON': js=json.loads(data.decode('utf-8')); break
+          nodes=js.get('nodes',[])
+          skins=js.get('skins',[])
+          parents={}
+          for i,n in enumerate(nodes):
+              for c in n.get('children',[]): parents[c]=i
+          joints=set()
+          for sk in skins:
+              joints.update(sk.get('joints',[]))
+          bones=[(i,n.get('name',''),parents.get(i)) for i,n in enumerate(nodes) if i in joints]
+          meta_path=pathlib.Path("web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json")
+          meta=json.loads(meta_path.read_text())
+          meta["skeletonNodes"]=[{"index":i,"name":name,"parent":parent} for i,name,parent in bones]
+          meta_path.write_text(json.dumps(meta,indent=2,ensure_ascii=False)+"\n")
+          print("SKELETON")
+          for i,name,parent in bones: print(f"{i}: {name} <- {parent}")
+          PY
+      - name: Commit skeleton metadata
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json
+          git diff --cached --quiet || git commit -m "chore(character): record skeleton node map"
+          git push

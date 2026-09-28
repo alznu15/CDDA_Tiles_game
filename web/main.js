@@ -1881,63 +1881,59 @@ let weaponInitialized=false;
 let ammo=120;
 let lastShotTime=0;
 let fireAccumulator=0;
+let gunActions={};
 
 function hideBuiltInWeapons(root){
-  const hiddenNames=new Set([
-    'AK','GrenadeLauncher','Pistol','Revolver','Revolver_Small',
-    'RocketLauncher','ShortCannon','Shotgun','Shovel','SMG','Sniper','Sniper_2'
-  ]);
+  const hiddenNames=/^(ak|ak47|grenade|grenadelauncher|pistol|revolver|rocketlauncher|shortcannon|shotgun|shovel|smg|sniper|weapon|weapon_geometry)$/i;
   root.traverse(o=>{
-    if(o.isMesh && hiddenNames.has(o.name)) o.visible=false;
+    if(o.isMesh && hiddenNames.test(o.name||'')) o.visible=false;
   });
 }
 
 function collectAimBones(){
-  aimBones={
-    shoulderR:null,upperR:null,lowerR:null,
-    shoulderL:null,upperL:null,lowerL:null
+  aimBones={rightHand:null,leftHand:null,rightLowerArm:null,leftLowerArm:null};
+  const aliases={
+    rightHand:new Set(['hand_r','righthand','right_hand']),
+    leftHand:new Set(['hand_l','lefthand','left_hand']),
+    rightLowerArm:new Set(['lowerarm_r','rightlowerarm','right_lower_arm','forearm_r']),
+    leftLowerArm:new Set(['lowerarm_l','leftlowerarm','left_lower_arm','forearm_l'])
   };
   characterRoot?.traverse(o=>{
     if(!o.isBone) return;
-    if(o.name==='Shoulder.R') aimBones.shoulderR=o;
-    else if(o.name==='UpperArm.R') aimBones.upperR=o;
-    else if(o.name==='LowerArm.R') aimBones.lowerR=o;
-    else if(o.name==='Shoulder.L') aimBones.shoulderL=o;
-    else if(o.name==='UpperArm.L') aimBones.upperL=o;
-    else if(o.name==='LowerArm.L') aimBones.lowerL=o;
+    const key=(o.name||'').toLowerCase().replace(/[.:]/g,'');
+    if(aliases.rightHand.has(key)) aimBones.rightHand=o;
+    else if(aliases.leftHand.has(key)) aimBones.leftHand=o;
+    else if(aliases.rightLowerArm.has(key)) aimBones.rightLowerArm=o;
+    else if(aliases.leftLowerArm.has(key)) aimBones.leftLowerArm=o;
   });
 }
 
 function makeWeapon(){
-  if(weaponInitialized || !characterRoot) return;
+  if(weaponInitialized||!characterRoot) return;
   weaponInitialized=true;
   collectAimBones();
 
-  const metal=new THREE.MeshStandardMaterial({color:0x1f2529,roughness:.42,metalness:.72});
-  const dark=new THREE.MeshStandardMaterial({color:0x101418,roughness:.58,metalness:.38});
-  const polymer=new THREE.MeshStandardMaterial({color:0x30373b,roughness:.74,metalness:.12});
+  const metal=new THREE.MeshStandardMaterial({color:0x20262a,roughness:.38,metalness:.78});
+  const dark=new THREE.MeshStandardMaterial({color:0x0f1417,roughness:.54,metalness:.34});
+  const polymer=new THREE.MeshStandardMaterial({color:0x30383c,roughness:.72,metalness:.10});
 
   weaponRoot=new THREE.Group();
   weaponRoot.name='AR-01 Carbine';
+  player.add(weaponRoot);
+  weaponRoot.rotation.order='YXZ';
 
-  const weaponParent=aimBones.lowerR || characterRoot;
-  weaponParent.add(weaponRoot);
-  if(aimBones.lowerR) weaponRoot.position.set(0,.37,.02);
-  else weaponRoot.position.set(.30,1.16,.05);
+  // Custom weapon forward is +Z, matching the player facing axis.
+  box(.34,.26,.82,0,0,-.05,metal,weaponRoot);
+  box(.22,.19,.72,0,.02,.58,dark,weaponRoot);
+  box(.12,.12,1.04,0,.02,1.28,metal,weaponRoot);
+  box(.18,.32,.30,0,-.18,-.42,polymer,weaponRoot);
+  box(.16,.36,.28,0,-.17,.02,dark,weaponRoot);
+  box(.11,.11,.24,0,.14,.36,metal,weaponRoot);
+  box(.08,.10,.18,0,.18,.64,metal,weaponRoot);
 
-  box(.34,.25,.78,0,0,-.05,metal,weaponRoot);
-  box(.18,.18,.52,0,.025,.58,dark,weaponRoot);
-  box(.11,.11,1.05,0,.015,-.86,metal,weaponRoot);
-  box(.15,.28,.28,0,-.18,-.28,polymer,weaponRoot);
-  box(.16,.36,.26,0,-.16,.10,dark,weaponRoot);
-  box(.12,.12,.28,0,.13,-.34,metal,weaponRoot);
-  box(.08,.10,.18,0,.18,-.55,metal,weaponRoot);
-
-  const muzzle=new THREE.Mesh(
-    new THREE.CylinderGeometry(.055,.055,.12,10),dark
-  );
+  const muzzle=new THREE.Mesh(new THREE.CylinderGeometry(.055,.055,.12,10),dark);
   muzzle.rotation.x=Math.PI/2;
-  muzzle.position.set(0,.015,-1.38);
+  muzzle.position.set(0,.02,1.80);
   muzzle.castShadow=true;
   weaponRoot.add(muzzle);
 
@@ -1948,13 +1944,13 @@ function makeWeapon(){
       depthWrite:false,side:THREE.DoubleSide
     })
   );
-  muzzleFlash.rotation.x=Math.PI/2;
-  muzzleFlash.position.set(0,.015,-1.60);
+  muzzleFlash.rotation.x=-Math.PI/2;
+  muzzleFlash.position.set(0,.02,2.02);
   muzzleFlash.visible=false;
   weaponRoot.add(muzzleFlash);
 
   muzzlePoint=new THREE.Object3D();
-  muzzlePoint.position.set(0,.015,-1.78);
+  muzzlePoint.position.set(0,.02,2.16);
   weaponRoot.add(muzzlePoint);
 
   const name=document.querySelector('.weaponName');
@@ -1971,51 +1967,37 @@ function updateAimVisual(weight){
   crosshair.style.opacity=String(.72+.28*weight);
 }
 
-function applyAimPose(weight){
-  if(!aimBones) return;
-
-  const pose=(bone,rx,ry,rz)=>{
-    if(!bone) return;
-    const base=bone.quaternion.clone();
-    const offset=new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(rx*weight,ry*weight,rz*weight,'XYZ')
-    );
-    const target=base.clone().multiply(offset);
-    bone.quaternion.copy(base).slerp(target,Math.min(1,weight)).normalize();
-  };
-
-  pose(aimBones.shoulderR,-0.22,0,-0.18);
-  pose(aimBones.upperR,-0.88,0,-0.28);
-  pose(aimBones.lowerR,-1.00,0,0.12);
-  pose(aimBones.shoulderL,-0.18,0,0.18);
-  pose(aimBones.upperL,-0.92,0,0.28);
-  pose(aimBones.lowerL,-0.96,0,-0.12);
+function getRoleForward(){
+  return new THREE.Vector3(0,0,1).applyQuaternion(player.quaternion).normalize();
 }
 
 function getAimDirection(){
-  const dir=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-  if(aimWeight>0.001){
-    const cameraDir=new THREE.Vector3();
-    camera.getWorldDirection(cameraDir);
-    dir.lerp(cameraDir,aimWeight).normalize();
-  }
-  return dir.normalize();
+  // Weapon and ballistics use character/player facing, never camera direction.
+  return getRoleForward();
 }
 
 function updateWeaponState(dt){
   if(weaponRoot){
-    const dir=getAimDirection();
-    const desiredWorldQ=new THREE.Quaternion().setFromUnitVectors(
-      new THREE.Vector3(0,0,-1),dir
-    );
-    const parentQ=new THREE.Quaternion();
-    weaponRoot.parent.getWorldQuaternion(parentQ);
-    parentQ.invert();
-    const desiredLocalQ=parentQ.multiply(desiredWorldQ);
+    let anchor;
+    if(aimBones?.rightHand){
+      anchor=aimBones.rightHand.getWorldPosition(new THREE.Vector3());
+      if(aimBones.leftHand){
+        const support=aimBones.leftHand.getWorldPosition(new THREE.Vector3());
+        anchor.lerp(support,.16);
+      }
+    }else{
+      anchor=player.getWorldPosition(new THREE.Vector3()).add(
+        new THREE.Vector3(.34,1.25,0).applyQuaternion(player.quaternion)
+      );
+    }
 
-    weaponRoot.quaternion.slerp(desiredLocalQ,Math.min(1,dt*22)).normalize();
-    const baseGripZ=aimBones?.lowerR ? .02 : .05;
-    weaponRoot.position.z=baseGripZ+recoilKick*.022;
+    player.worldToLocal(anchor);
+    weaponRoot.position.copy(anchor);
+    weaponRoot.position.y-=.035;
+    weaponRoot.position.z-=recoilKick*.022;
+
+    // Never rotate the arm bones. The weapon direction comes only from player.
+    weaponRoot.quaternion.identity();
   }
 
   if(muzzleFlash){
@@ -2092,8 +2074,7 @@ function fireWeapon(){
   recoilYaw=(Math.random()-.5)*.045;
 
   const origin=camera.position.clone();
-  const direction=new THREE.Vector3();
-  camera.getWorldDirection(direction);
+  const direction=getRoleForward();
   const hit=raycastStatic(origin,direction,260);
   const muzzleWorld=muzzlePoint.getWorldPosition(new THREE.Vector3());
 
@@ -2104,8 +2085,13 @@ function fireWeapon(){
   if(meta) meta.textContent='LMB FIRE • RMB AIM • '+ammo+' / ∞';
 }
 
+function chooseAnimation(base){
+  const key=base.toLowerCase();
+  return gunActions[key]||actions[base]||actions.Idle||null;
+}
+
 function setAction(name,fade=.18){
-  const next=actions[name] || actions.Idle;
+  const next=chooseAnimation(name);
   if(!next) return;
   if(currentAction===next) return;
   if(currentAction) currentAction.fadeOut(fade);
@@ -2120,9 +2106,13 @@ async function loadCharacter(){
     return;
   }
   try{
-    loading.textContent='Loading character asset…';
+    loading.textContent='Loading replacement character…';
+
+    // New character: Quaternius humanoid + Universal Animation Library.
+    // The old Character_Soldier asset is gone from the player pipeline, so its
+    // embedded firearm meshes can no longer fight the custom weapon system.
     const gltf=await loader.loadAsync(
-      'https://raw.githubusercontent.com/chongdashu/vibejam-starter-pack/main/projects/toonshooter/public/assets/toonshooter/Characters/glTF/Character_Soldier.gltf'
+      'https://raw.githubusercontent.com/NafisRayan/Animate-Rigged-Humanoid-No-Blender/main/test/human_male.glb'
     );
 
     characterRoot=gltf.scene;
@@ -2134,7 +2124,6 @@ async function loadCharacter(){
     characterRoot.visible=true;
     characterRoot.scale.setScalar(1);
 
-    // Normalize against the real rendered bounds, then put the feet exactly on the ground.
     const initialBox=new THREE.Box3().setFromObject(characterRoot);
     const initialSize=initialBox.getSize(new THREE.Vector3());
     const initialHeight=initialSize.y;
@@ -2143,11 +2132,9 @@ async function loadCharacter(){
       characterRoot.scale.setScalar(characterBaseScale);
     }
 
-    // The gameplay direction is already correct; align the character model forward with it.
+    // Keep the replacement on the same +Z gameplay-forward axis.
     characterRoot.rotation.y=0;
 
-    // Scaling/rotation can move the model bounds below y=0. Recompute after scaling
-    // and lift it so the rendered feet sit exactly on the ground.
     characterRoot.updateMatrixWorld(true);
     const finalBox=new THREE.Box3().setFromObject(characterRoot);
     if(Number.isFinite(finalBox.min.y)) characterRoot.position.y=-finalBox.min.y;
@@ -2157,34 +2144,58 @@ async function loadCharacter(){
     makeWeapon();
 
     mixer=new THREE.AnimationMixer(characterRoot);
-    for(const clip of gltf.animations){
-      const key=clip.name.toLowerCase();
-      const action=mixer.clipAction(clip);
+    actions={};
+    gunActions={};
 
-      if(key.includes('jump') || key.includes('fall') || key.includes('air')){
-        if(!actions.Jump) actions.Jump=action;
-      }else if(key.includes('idle')){
-        if(!actions.Idle) actions.Idle=action;
-      }else if(key.includes('walk')){
-        if(!actions.Walk) actions.Walk=action;
-      }else if(key.includes('run')){
-        if(!actions.Run) actions.Run=action;
+    const clipMap=new Map();
+    for(const clip of gltf.animations||[]){
+      const normalized=clip.name.toLowerCase().replace(/\s+/g,'_');
+      const action=mixer.clipAction(clip);
+      clipMap.set(normalized,action);
+
+      if(normalized==='idle'&&!actions.Idle) actions.Idle=action;
+      if(normalized==='walk'&&!actions.Walk) actions.Walk=action;
+      if(normalized==='run'&&!actions.Run) actions.Run=action;
+      if((normalized==='jump'||normalized==='jump_start'||normalized==='jump_loop')&&!actions.Jump) actions.Jump=action;
+
+      if(normalized.includes('gun')||normalized.includes('shoot')){
+        if(normalized.includes('idle')&&!gunActions.Idle) gunActions.Idle=action;
+        if(normalized.includes('walk')&&!gunActions.Walk) gunActions.Walk=action;
+        if(normalized.includes('run')&&!gunActions.Run) gunActions.Run=action;
+        if((normalized.includes('jump')||normalized.includes('fall')||normalized.includes('air'))&&!gunActions.Jump) gunActions.Jump=action;
       }
     }
+
+    const findClip=(patterns)=>{
+      for(const p of patterns){
+        const exact=clipMap.get(p);
+        if(exact) return exact;
+      }
+      for(const [name,action] of clipMap){
+        if(patterns.some(p=>name.includes(p))) return action;
+      }
+      return null;
+    };
+
+    gunActions.Idle=gunActions.Idle||findClip(['idle_gun','idle_gun_pointing','idle_weapon'])||actions.Idle;
+    gunActions.Walk=gunActions.Walk||findClip(['walk_gun','walk_weapon'])||actions.Walk;
+    gunActions.Run=gunActions.Run||findClip(['run_gun','run_weapon'])||actions.Run;
+    gunActions.Jump=gunActions.Jump||findClip(['jump_gun','jump_weapon','run_gun_shoot'])||actions.Jump;
+
     setAction('Idle',0);
     characterReady=true;
-    loading.textContent='Character ready.';
-    console.log('Character loaded:', {
-      height: (new THREE.Box3().setFromObject(characterRoot).max.y - new THREE.Box3().setFromObject(characterRoot).min.y).toFixed(2),
-      position: characterRoot.position.toArray(),
-      scale: characterRoot.scale.toArray()
+    loading.textContent='Replacement character ready.';
+    console.log('Replacement character loaded:',{
+      clipCount:(gltf.animations||[]).length,
+      gunActions:Object.fromEntries(Object.entries(gunActions).map(([k,v])=>[k,v?.getClip().name||null])),
+      rightHand:aimBones?.rightHand?.name||null,
+      leftHand:aimBones?.leftHand?.name||null
     });
   }catch(err){
-    console.error('Character load failed',err);
-    loading.textContent='Character asset failed to load; gameplay remains available.';
+    console.error('Character replacement load failed',err);
+    loading.textContent='Replacement character failed to load; gameplay remains available.';
   }
 }
-
 const spawnRing=new THREE.Mesh(
   new THREE.RingGeometry(1.05,1.17,40),
   new THREE.MeshBasicMaterial({color:0x9de5ff,transparent:true,opacity:.8,side:THREE.DoubleSide})
@@ -2635,7 +2646,7 @@ function updatePlayer(dt,time){
 
   if(characterReady){
     if(sprintJump.active){
-      const jumpAction=actions.Jump||actions.Run||actions.Idle;
+      const jumpAction=gunActions.Jump||actions.Jump||gunActions.Run||actions.Run||gunActions.Idle||actions.Idle;
       if(jumpAction) setAction(jumpAction,.06);
       sprintJump.phase=Math.min(1,(performance.now()-sprintJump.timer)/620);
       if(sprintJump.phase>=1 && grounded) sprintJump.active=false;
@@ -2651,7 +2662,6 @@ function updatePlayer(dt,time){
       16,
       dt
     );
-    applyAimPose(aimWeight);
     updateWeaponState(dt);
   }
 

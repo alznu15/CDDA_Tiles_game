@@ -3303,7 +3303,7 @@ function __CDDA_applyWeaponPose(dt){
   armBlend=THREE.MathUtils.clamp(armBlend,0,1);
   weaponPoseWeight=armBlend;
 
-  const poseWanted=(input.aim||input.fire||recoilKick>.08)?1:0;
+  const poseWanted=(weaponState==='equipped' && (input.aim||input.fire||recoilKick>.08))?1:0;
   __CDDA_aimPoseWeight=THREE.MathUtils.damp(__CDDA_aimPoseWeight,poseWanted,input.fire?34:13,dt);
 
   const baseHands=__CDDA_getBaseHandTargets();
@@ -3332,11 +3332,13 @@ function __CDDA_applyWeaponPose(dt){
     }
   }
 
-  const readyPose=__CDDA_weaponPoseFromGrips(
+  const readyWorldPosition=new THREE.Vector3();
+  const readyWorldQuaternion=new THREE.Quaternion();
+  __CDDA_weaponPoseFromGrips(
     targetHands.right,targetHands.left,
-    new THREE.Vector3(),new THREE.Quaternion()
+    readyWorldPosition,readyWorldQuaternion
   );
-  const ready=__CDDA_playerLocalPose(readyPose.position,readyPose.quaternion);
+  const ready=__CDDA_playerLocalPose(readyWorldPosition,readyWorldQuaternion);
 
   const holsterPos=weaponHolsterPosition.clone();
   const holsterQ=weaponHolsterQuaternion.clone();

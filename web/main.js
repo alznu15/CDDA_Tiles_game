@@ -279,7 +279,9 @@ function addCentralFountain(){
     g.add(jet);
     jets.push(jet);
 
-    const drop=new THREE.Mesh(new THREE.SphereGeometry(.075,10,8),waterMat);
+    const dropMat=waterMat.clone();
+    dropMat.opacity=.72;
+    const drop=new THREE.Mesh(new THREE.SphereGeometry(.075,10,8),dropMat);
     drop.position.set(p[0],2.04,p[1]);
     g.add(drop);
     jetDroplets.push({mesh:drop,phase:idx*.7});
@@ -1037,6 +1039,7 @@ function getCameraClearDistance(target,desired){
   let safeDistance=distance;
 
   for(const c of staticColliders){
+    if(c.passable && c.passable(cameraRay.origin.x,cameraRay.origin.z)) continue;
     cameraBox.min.set(
       c.x-c.w*.5-cameraCollisionRadius,
       -cameraCollisionRadius,

@@ -263,6 +263,9 @@ function addBuilding(x,z,w,d,h,mat){
   box(.28,h-.7,.18,-w/2+.16,h/2, d/2+.04,accent,g);
   box(.28,h-.7,.18,w/2-.16,h/2, d/2+.04,accent,g);
 
+  const frontZ=d/2+.035;
+  const backZ=-d/2-.035;
+
   // Roof silhouette varies by building instead of cloning the same cube.
   const styleIndex=Math.abs(Math.round(x*.13+z*.07))%3;
   if(styleIndex===1){
@@ -280,8 +283,6 @@ function addBuilding(x,z,w,d,h,mat){
   const facadePanelMat=styleIndex===0?MAT.wood:(styleIndex===1?MAT.brick:MAT.buildingA);
   box(Math.min(w*.54,8.5),Math.min(2.1,h*.28),.08,0,Math.min(3.8,h*.44),frontZ-.055,facadePanelMat,g);
 
-  const frontZ=d/2+.035;
-  const backZ=-d/2-.035;
   const rows=Math.max(2,Math.floor(w/4.2));
   const windowRows=h>=10?2:1;
 
@@ -478,29 +479,69 @@ function addParkPavilion(x,z,rot=0){
 
   const wood=MAT.wood;
   const stone=MAT.stone;
-  const postPositions=[[-2.7,-2.0],[2.7,-2.0],[-2.7,2.0],[2.7,2.0]];
-  postPositions.forEach(([px,pz])=>box(.26,2.8,.26,px,1.4,pz,wood,g));
-  box(6.1,.24,4.7,0,3.02,0,MAT.roof,g);
-  box(5.4,.12,4.05,0,3.15,0,wood,g);
+  const c=Math.cos(rot),s=Math.sin(rot);
+  const toWorld=(lx,lz)=>[x+lx*c-lz*s,z+lx*s+lz*c];
 
-  // Two partial back walls: strong enough for combat cover but open like a real park pavilion.
-  box(5.5,1.45,.18,0,.73,1.95,stone,g);
-  box(.18,1.2,3.5,-2.65,.6,0,stone,g);
-  collider(x,z,5.8,4.1,.1,2.8);
+  for(const [px,pz] of [[-2.7,-2.0],[2.7,-2.0],[-2.7,2.0],[2.7,2.0]]){
+    box(.34,3.0,.34,px,1.5,pz,wood,g);
+    const [wx,wz]=toWorld(px,pz);
+    orientedCollider(wx,wz,.34,.34,3.0,rot,.05);
+  }
+
+  box(6.35,.28,4.95,0,3.05,0,MAT.roof,g);
+  box(5.85,.14,4.45,0,3.22,0,wood,g);
+
+  // Connected beams visually tie the roof to the posts.
+  box(5.95,.22,.26,0,2.84,-2.18,wood,g);
+  box(5.95,.22,.26,0,2.84,2.18,wood,g);
+  box(.26,.22,4.55,-2.92,2.84,0,wood,g);
+  box(.26,.22,4.55,2.92,2.84,0,wood,g);
+
+  // Two partial walls create useful cover while leaving the pavilion enterable.
+  box(5.55,1.55,.20,0,.775,1.98,stone,g);
+  box(.20,1.25,3.55,-2.68,.625,0,stone,g);
+  const [bx,bz]=toWorld(0,1.98);
+  orientedCollider(bx,bz,5.55,.20,1.55,rot,.05);
+  const [sx,sz]=toWorld(-2.68,0);
+  orientedCollider(sx,sz,.20,3.55,1.25,rot,.05);
 }
-
 function addParkKiosk(x,z,rot=0){
   const g=new THREE.Group();
   g.position.set(x,0,z);
   g.rotation.y=rot;
   world.add(g);
-  box(4.2,2.7,3.2,0,1.35,0,MAT.wood,g);
-  box(4.5,.25,3.5,0,2.85,0,MAT.roof,g);
-  box(2.2,1.1,.12,0,1.55,1.64,MAT.glass,g);
-  box(1.2,2.0,.12,-1.45,1.0,1.64,MAT.door,g);
-  collider(x,z,4.3,3.3,.08,2.8);
-}
 
+  const c=Math.cos(rot),s=Math.sin(rot);
+  const toWorld=(lx,lz)=>[x+lx*c-lz*s,z+lx*s+lz*c];
+
+  // Back wall + two side walls leave the front open.
+  box(4.35,2.85,.20,0,1.425,-1.52,MAT.wood,g);
+  box(.20,2.5,3.05,-2.08,1.25,0,MAT.wood,g);
+  box(.20,2.5,3.05,2.08,1.25,0,MAT.wood,g);
+
+  // Roof and connected fascia.
+  box(4.6,.24,3.55,0,2.93,0,MAT.roof,g);
+  box(4.25,.14,3.18,0,3.11,0,MAT.wood,g);
+  box(4.35,.18,.24,0,2.73,-1.6,MAT.wood,g);
+  box(.24,.18,3.15,-2.18,2.73,0,MAT.wood,g);
+  box(.24,.18,3.15,2.18,2.73,0,MAT.wood,g);
+
+  // Front service counter with a clear standing gap.
+  box(3.55,.68,.42,0,1.0,1.38, MAT.stone,g);
+  box(.22,2.65,.22,-1.85,1.325,1.35,MAT.wood,g);
+  box(.22,2.65,.22,1.85,1.325,1.35,MAT.wood,g);
+
+  let [wx,wz]=toWorld(0,-1.52);
+  orientedCollider(wx,wz,4.35,.20,2.85,rot,.05);
+  [ [-2.08,0,.20,3.05,2.5], [2.08,0,.20,3.05,2.5] ].forEach(([lx,lz,w,d,h])=>{
+    const [px,pz]=toWorld(lx,lz);
+    orientedCollider(px,pz,w,d,h,rot,.05);
+  });
+  [ [-1.85,1.35], [1.85,1.35] ].forEach(([lx,lz])=>{
+    const [px,pz]=toWorld(lx,lz);
+    orientedCollider(px,pz,.24,.24,2.65,rot,.05);
+  });
+}
 function addParkBin(x,z){
   const bin=new THREE.Mesh(new THREE.CylinderGeometry(.28,.34,.8,12),MAT.metal);
   bin.position.set(x,.4,z);

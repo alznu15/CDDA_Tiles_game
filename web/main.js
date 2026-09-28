@@ -1882,6 +1882,26 @@ let ammo=120;
 let lastShotTime=0;
 let fireAccumulator=0;
 let gunActions={};
+let rigBones={};
+let rigBoneList=[];
+let rigBaseQuaternions=new Map();
+let rigAnimationCatalog=new Map();
+let rigAimAction=null;
+let rigTraversalAction=null;
+let rigJumpStart=null;
+let rigJumpLoop=null;
+let rigJumpLand=null;
+let rigClimbUp=null;
+let rigPistolShoot=null;
+let techSuitRoot=null;
+const characterMotion={
+  mode:'idle',
+  traversal:false,
+  traversalTimer:0,
+  traversalDuration:.72,
+  landTimer:0
+};
+
 
 function hideBuiltInWeapons(root){
   const hiddenNames=/^(ak|ak47|grenade|grenadelauncher|pistol|revolver|rocketlauncher|shortcannon|shotgun|shovel|smg|sniper|weapon|weapon_geometry)$/i;
@@ -1978,26 +1998,9 @@ function getAimDirection(){
 
 function updateWeaponState(dt){
   if(weaponRoot){
-    let anchor;
-    if(aimBones?.rightHand){
-      anchor=aimBones.rightHand.getWorldPosition(new THREE.Vector3());
-      if(aimBones.leftHand){
-        const support=aimBones.leftHand.getWorldPosition(new THREE.Vector3());
-        anchor.lerp(support,.16);
-      }
-    }else{
-      anchor=player.getWorldPosition(new THREE.Vector3()).add(
-        new THREE.Vector3(.34,1.25,0).applyQuaternion(player.quaternion)
-      );
-    }
-
-    player.worldToLocal(anchor);
-    weaponRoot.position.copy(anchor);
-    weaponRoot.position.y-=.035;
-    weaponRoot.position.z-=recoilKick*.022;
-
-    // Never rotate the arm bones. The weapon direction comes only from player.
+    weaponRoot.position.set(.34,1.24,.04);
     weaponRoot.quaternion.identity();
+    weaponRoot.position.z-=recoilKick*.022;
   }
 
   if(muzzleFlash){
@@ -2010,7 +2013,6 @@ function updateWeaponState(dt){
   recoilYaw=THREE.MathUtils.damp(recoilYaw,0,12,dt);
   recoilPitch=THREE.MathUtils.damp(recoilPitch,0,12,dt);
 }
-
 function raycastStatic(origin,direction,maxDistance=260){
   cameraRay.origin.copy(origin);
   cameraRay.direction.copy(direction).normalize();
@@ -2085,11 +2087,231 @@ function fireWeapon(){
   if(meta) meta.textContent='LMB FIRE • RMB AIM • '+ammo+' / ∞';
 }
 
-function chooseAnimation(base){
-  const key=base.toLowerCase();
-  return gunActions[key]||actions[base]||actions.Idle||null;
+
+function normalizeBoneName(name){
+  return String(name||'').toLowerCase().replace(/[._:\-\s]/g,'');
 }
 
+function collectFullRig(){
+  rigBones={};
+  rigBoneList=[];
+  if(!characterRoot) return;
+  characterRoot.traverse(o=>{
+    if(!o.isBone) return;
+    const key=normalizeBoneName(o.name);
+    if(!key) return;
+    rigBones[key]=o;
+    rigBoneList.push(o);
+  });
+  window.__CHARACTER_RIG__={
+    listBones:()=>rigBoneList.map(b=>b.name),
+    getBone:name=>rigBones[normalizeBoneName(name)]||null,
+    setBoneRotation:(name,x=0,y=0,z=0,weight=1)=>{
+      const bone=rigBones[normalizeBoneName(name)];
+      if(!bone) return false;
+      const base=bone.quaternion.clone();
+      const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(x,y,z,'XYZ'));
+      bone.quaternion.copy(base).slerp(base.clone().multiply(q),THREE.MathUtils.clamp(weight,0,1));
+      return true;
+    }
+  };
+}
+
+function captureRigAnimationBase(){
+  rigBaseQuaternions.clear();
+  for(const bone of rigBoneList) rigBaseQuaternions.set(bone,bone.quaternion.clone());
+}
+
+function applyBoneWorldQuaternion(bone,worldQuaternion){
+  if(!bone.parent){ bone.quaternion.copy(worldQuaternion); return; }
+  const parentQ=new THREE.Quaternion();
+  bone.parent.getWorldQuaternion(parentQ);
+  parentQ.invert();
+  bone.quaternion.copy(parentQ.multiply(worldQuaternion));
+}
+
+function solveTwoBoneIK(upper,lower,end,targetWorld,poleWorld,weight=1){
+  if(!upper||!lower||!end||!targetWorld) return;
+  weight=THREE.MathUtils.clamp(weight,0,1);
+  const shoulder=upper.getWorldPosition(new THREE.Vector3());
+  const elbow=lower.getWorldPosition(new THREE.Vector3());
+  const hand=end.getWorldPosition(new THREE.Vector3());
+  const a=elbow.distanceTo(shoulder);
+  const b=hand.distanceTo(elbow);
+  if(a<1e-4||b<1e-4) return;
+
+  const toTarget=targetWorld.clone().sub(shoulder);
+  const rawDist=toTarget.length();
+  const maxReach=Math.max(.001,a+b-.001);
+  const minReach=Math.max(.001,Math.abs(a-b)+.001);
+  const dist=THREE.MathUtils.clamp(rawDist,minReach,maxReach);
+  const forward=toTarget.normalize();
+
+  let pole=poleWorld?poleWorld.clone().sub(shoulder):new THREE.Vector3(0,1,0);
+  pole.projectOnPlane(forward);
+  if(pole.lengthSq()<1e-5){
+    pole=new THREE.Vector3(0,1,0);
+    pole.projectOnPlane(forward);
+  }
+  pole.normalize();
+
+  const cosShoulder=THREE.MathUtils.clamp((a*a+dist*dist-b*b)/(2*a*dist),-1,1);
+  const sinShoulder=Math.sqrt(Math.max(0,1-cosShoulder*cosShoulder));
+  const desiredElbow=shoulder.clone()
+    .addScaledVector(forward,dist*cosShoulder)
+    .addScaledVector(pole,sinShoulder*a);
+
+  const currentUpperDir=elbow.clone().sub(shoulder).normalize();
+  const desiredUpperDir=desiredElbow.clone().sub(shoulder).normalize();
+  const upperDelta=new THREE.Quaternion().setFromUnitVectors(currentUpperDir,desiredUpperDir);
+  const currentUpperWorld=new THREE.Quaternion();
+  upper.getWorldQuaternion(currentUpperWorld);
+  const desiredUpperWorld=upperDelta.multiply(currentUpperWorld);
+  if(rigBaseQuaternions.has(upper)){
+    rigBaseQuaternions.get(upper).clone().slerp(desiredUpperWorld,weight);
+  }
+  const upperWorld=rigBaseQuaternions.has(upper)
+    ? rigBaseQuaternions.get(upper).clone().slerp(desiredUpperWorld,weight)
+    : desiredUpperWorld;
+  applyBoneWorldQuaternion(upper,upperWorld);
+  characterRoot.updateMatrixWorld(true);
+
+  const newElbow=lower.getWorldPosition(new THREE.Vector3());
+  const newHand=end.getWorldPosition(new THREE.Vector3());
+  const currentLowerDir=newHand.clone().sub(newElbow).normalize();
+  const desiredLowerDir=targetWorld.clone().sub(newElbow).normalize();
+  const lowerDelta=new THREE.Quaternion().setFromUnitVectors(currentLowerDir,desiredLowerDir);
+  const currentLowerWorld=new THREE.Quaternion();
+  lower.getWorldQuaternion(currentLowerWorld);
+  const desiredLowerWorld=lowerDelta.multiply(currentLowerWorld);
+  const lowerWorld=rigBaseQuaternions.has(lower)
+    ? rigBaseQuaternions.get(lower).clone().slerp(desiredLowerWorld,weight)
+    : desiredLowerWorld;
+  applyBoneWorldQuaternion(lower,lowerWorld);
+}
+
+function findRigClip(patterns){
+  for(const pattern of patterns){
+    const direct=rigAnimationCatalog.get(normalizeBoneName(pattern));
+    if(direct) return direct;
+  }
+  for(const [name,action] of rigAnimationCatalog){
+    const clean=normalizeBoneName(name);
+    if(patterns.some(p=>clean.includes(normalizeBoneName(p)))) return action;
+  }
+  return null;
+}
+
+function setupCharacterAnimationLibrary(){
+  rigAnimationCatalog=new Map();
+  for(const clip of characterRoot?.userData?.allAnimationClips||[]){
+    rigAnimationCatalog.set(normalizeBoneName(clip.name),mixer.clipAction(clip));
+  }
+  rigJumpStart=findRigClip(['Jump_Start','JumpStart'])||actions.Jump||null;
+  rigJumpLoop=findRigClip(['Jump_Loop','Jump'])||actions.Jump||null;
+  rigJumpLand=findRigClip(['Jump_Land','JumpLand'])||null;
+  rigClimbUp=findRigClip(['ClimbUp_1m','ClimbUp'])||null;
+  rigAimAction=findRigClip(['Pistol_Aim_Neutral','PistolAimNeutral','Pistol_Aim'])||null;
+  rigPistolShoot=findRigClip(['Pistol_Shoot','PistolShoot'])||null;
+}
+
+function applyAimIK(weight){
+  if(!weaponRoot||!rigBones) return;
+  const upperR=rigBones.upperarmr, lowerR=rigBones.lowerarmr, handR=rigBones.handr;
+  const upperL=rigBones.upperarml, lowerL=rigBones.lowerarml, handL=rigBones.handl;
+  if(!upperR||!lowerR||!handR) return;
+
+  const rightGrip=weaponRoot.localToWorld(new THREE.Vector3(-.02,0,-.08));
+  const leftGrip=weaponRoot.localToWorld(new THREE.Vector3(-.02,.02,.50));
+  const playerPos=player.getWorldPosition(new THREE.Vector3());
+  const poleR=playerPos.clone().add(new THREE.Vector3(.15,1.0,-.4).applyQuaternion(player.quaternion));
+  const poleL=playerPos.clone().add(new THREE.Vector3(-.15,1.0,-.4).applyQuaternion(player.quaternion));
+
+  solveTwoBoneIK(upperR,lowerR,handR,rightGrip,poleR,weight);
+  if(upperL&&lowerL&&handL) solveTwoBoneIK(upperL,lowerL,handL,leftGrip,poleL,weight);
+}
+
+function applyFingerGrip(weight){
+  const fingers=[
+    ['index',.42,.68],['middle',.45,.72],['ring',.38,.64],['pinky',.35,.58]
+  ];
+  for(const [finger,a,b] of fingers){
+    for(const side of ['r','l']){
+      const j1=rigBones[normalizeBoneName(finger+'_01_'+side)];
+      const j2=rigBones[normalizeBoneName(finger+'_02_'+side)];
+      const j3=rigBones[normalizeBoneName(finger+'_03_'+side)];
+      const j4=rigBones[normalizeBoneName(finger+'_04_leaf_'+side)];
+      if(j1) j1.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(a*weight,0,0,'XYZ')));
+      if(j2) j2.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(b*weight,0,0,'XYZ')));
+      if(j3) j3.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(.25*weight,0,0,'XYZ')));
+      if(j4) j4.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(.1*weight,0,0,'XYZ')));
+    }
+  }
+}
+
+function addTechSuit(){
+  if(!characterRoot||techSuitRoot) return;
+  techSuitRoot=new THREE.Group();
+  techSuitRoot.name='TECH-RIG-SUIT';
+  characterRoot.add(techSuitRoot);
+
+  const armor=new THREE.MeshStandardMaterial({color:0x1b2630,roughness:.42,metalness:.62});
+  const armorLight=new THREE.MeshStandardMaterial({color:0x667680,roughness:.34,metalness:.72});
+  const emissive=new THREE.MeshStandardMaterial({color:0x16303a,emissive:0x27d7ff,emissiveIntensity:2.4,roughness:.3,metalness:.4});
+
+  const attach=(boneKey,size,pos,rot,mat)=>{
+    const bone=rigBones[normalizeBoneName(boneKey)];
+    if(!bone) return;
+    const mesh=new THREE.Mesh(new THREE.BoxGeometry(...size),mat);
+    mesh.position.set(...pos);
+    if(rot) mesh.rotation.set(...rot);
+    mesh.castShadow=true;
+    mesh.receiveShadow=true;
+    bone.add(mesh);
+  };
+
+  attach('spine_03',[.72,.44,.10],[0,.01,.15],[0,0,0],armor);
+  attach('spine_03',[.26,.08,.035],[0,.16,.205],[0,0,0],emissive);
+  attach('spine_03',[.13,.13,.035],[0,.03,.215],[0,0,0],emissive);
+  attach('pelvis',[.70,.16,.11],[0,.02,.03],[0,0,0],armorLight);
+  attach('upperarm_r',[.20,.26,.22],[0,.02,.02],[0,0,-.12],armorLight);
+  attach('upperarm_l',[.20,.26,.22],[0,.02,.02],[0,0,.12],armorLight);
+  attach('lowerarm_r',[.18,.34,.20],[0,.01,.04],[0,0,-.08],armor);
+  attach('lowerarm_l',[.18,.34,.20],[0,.01,.04],[0,0,.08],armor);
+  attach('lowerarm_r',[.08,.10,.025],[0,.03,.145],[0,0,0],emissive);
+  attach('lowerarm_l',[.08,.10,.025],[0,.03,.145],[0,0,0],emissive);
+  attach('thigh_r',[.27,.40,.20],[0,.00,.015],[0,0,-.04],armor);
+  attach('thigh_l',[.27,.40,.20],[0,.00,.015],[0,0,.04],armor);
+  attach('calf_r',[.23,.36,.18],[0,-.01,.03],[0,0,-.03],armorLight);
+  attach('calf_l',[.23,.36,.18],[0,-.01,.03],[0,0,.03],armorLight);
+  attach('foot_r',[.27,.12,.40],[0,-.005,.06],[0,0,0],armor);
+  attach('foot_l',[.27,.12,.40],[0,-.005,.06],[0,0,0],armor);
+  attach('hand_r',[.15,.08,.13],[0,.02,.01],[0,0,0],armor);
+  attach('hand_l',[.15,.08,.13],[0,.02,.01],[0,0,0],armor);
+  attach('head',[.34,.11,.09],[0,.055,.07],[0,0,0],armorLight);
+  attach('head',[.24,.055,.025],[0,.062,.122],[0,0,0],emissive);
+}
+
+function applyCharacterRig(){
+  if(!characterReady||!characterRoot) return;
+  captureRigAnimationBase();
+  if(input.aim){
+    applyAimIK(aimWeight);
+    applyFingerGrip(aimWeight);
+  }
+}
+
+function chooseAnimation(base){
+  const key=normalizeBoneName(base);
+  const rigDirect=rigAnimationCatalog.get(key);
+  if(rigDirect) return rigDirect;
+  if(key==='aim') return rigAimAction||actions.Idle||null;
+  if(key==='climbup') return rigClimbUp||actions.Jump||actions.Idle||null;
+  if(key==='jumpstart') return rigJumpStart||actions.Jump||actions.Idle||null;
+  if(key==='jumploop') return rigJumpLoop||actions.Jump||actions.Idle||null;
+  if(key==='jumpland') return rigJumpLand||actions.Idle||null;
+  return gunActions[key]||actions[base]||actions.Idle||null;
+}
 function setAction(name,fade=.18){
   const next=chooseAnimation(name);
   if(!next) return;
@@ -2146,20 +2368,17 @@ async function loadCharacter(){
     mixer=new THREE.AnimationMixer(characterRoot);
     actions={};
     gunActions={};
+    characterRoot.userData.allAnimationClips=[...(gltf.animations||[])];
 
     const clipMap=new Map();
     for(const clip of gltf.animations||[]){
       const normalized=clip.name.toLowerCase().replace(/\s+/g,'_');
       const action=mixer.clipAction(clip);
       clipMap.set(normalized,action);
-
       if(normalized==='idle'&&!actions.Idle) actions.Idle=action;
       if(normalized==='walk'&&!actions.Walk) actions.Walk=action;
       if(normalized==='run'&&!actions.Run) actions.Run=action;
       if((normalized==='jump'||normalized==='jump_start'||normalized==='jump_loop')&&!actions.Jump) actions.Jump=action;
-
-      // Exact armed-locomotion names win. Shooting variants are never
-      // allowed to become the idle/walk/run loop accidentally.
       if(normalized==='idle_gun') gunActions.Idle=gunActions.Idle||action;
       if(normalized==='walk_gun') gunActions.Walk=gunActions.Walk||action;
       if(normalized==='run_gun') gunActions.Run=gunActions.Run||action;
@@ -2177,10 +2396,14 @@ async function loadCharacter(){
       return null;
     };
 
-    gunActions.Idle=gunActions.Idle||findClip(['idle_gun','idle_gun_pointing','idle_weapon'])||actions.Idle;
+    gunActions.Idle=gunActions.Idle||findClip(['idle_gun','idle_weapon'])||actions.Idle;
     gunActions.Walk=gunActions.Walk||findClip(['walk_gun','walk_weapon'])||actions.Walk;
     gunActions.Run=gunActions.Run||findClip(['run_gun','run_weapon'])||actions.Run;
-    gunActions.Jump=gunActions.Jump||findClip(['jump_gun','jump_weapon','run_gun_shoot'])||actions.Jump;
+    gunActions.Jump=gunActions.Jump||findClip(['jump_gun','jump_weapon'])||actions.Jump;
+
+    collectFullRig();
+    setupCharacterAnimationLibrary();
+    addTechSuit();
 
     setAction('Idle',0);
     characterReady=true;

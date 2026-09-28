@@ -1884,6 +1884,15 @@ let lastShotTime=0;
 let fireAccumulator=0;
 let gunActions={};
 
+// Upper-body weapon template layer. Locomotion stays on the base action
+// while these actions own chest/arms/head when the rifle is equipped.
+let upperBodyActions={
+  idle:null,
+  walk:null,
+  run:null
+};
+let activeUpperBodyAction=null;
+
 // CDDA_WEAPON_RIG_V2
 // Separate weapon socket system: rifle starts on the back, then transitions
 // into a hand-driven two-point grip without being parented to an arm mesh.
@@ -2328,8 +2337,7 @@ function buildWeaponGraspOverlay(clip){
 }
 
 function chooseAnimation(base){
-  const key=base.toLowerCase();
-  return gunActions[key]||actions[base]||actions.Idle||null;
+  return actions[base]||actions.Idle||null;
 }
 
 function setAction(name,fade=.18){
@@ -2339,6 +2347,85 @@ function setAction(name,fade=.18){
   if(currentAction) currentAction.fadeOut(fade);
   next.reset().fadeIn(fade).play();
   currentAction=next;
+}
+
+function buildUpperBodyWeaponAction(sourceAction,name){
+  if(!mixer||!sourceAction) return null;
+  const clip=sourceAction.getClip().clone();
+  const keep=/spine|clavicle|neck|head|shoulder|upperarm|lowerarm|forearm|hand|wrist/i;
+  const drop=/pelvis|hip|thigh|calf|shin|leg|foot|toe/i;
+  clip.tracks=clip.tracks.filter(track=>{
+    const pathName=String(track.name||'');
+    return keep.test(pathName)&&!drop.test(pathName);
+  }).map(track=>track.clone());
+
+  if(!clip.tracks.length) return null;
+
+  clip.name='CDDA_UpperBody_'+name;
+  const action=mixer.clipAction(clip);
+  action.enabled=false;
+  action.setEffectiveWeight(0);
+  action.setLoop(THREE.LoopRepeat,Infinity);
+  action.play();
+  return action;
+}
+
+function setUpperBodyAction(next,fade=.12){
+  if(activeUpperBodyAction===next) return;
+  if(activeUpperBodyAction){
+    activeUpperBodyAction.fadeOut(fade);
+  }
+  activeUpperBodyAction=next||null;
+  if(activeUpperBodyAction){
+    activeUpperBodyAction.enabled=true;
+    activeUpperBodyAction.reset().setEffectiveWeight(1).fadeIn(fade).play();
+  }
+}
+
+function updateUpperBodyWeaponTemplate(dt,moving,sprint){
+  if(!characterReady||!mixer) return;
+
+  const equipped =
+    weaponState==='equipped' ||
+    weaponState==='drawing' ||
+    weaponState==='holstering';
+
+  if(!equipped){
+    if(activeUpperBodyAction){
+      activeUpperBodyAction.fadeOut(.10);
+      activeUpperBodyAction=null;
+    }
+    return;
+  }
+
+  // Fire and ADS deliberately lock the chest/arms to the static armed template.
+  // Only non-firing locomotion gets the walk/run gun sway.
+  let wanted=upperBodyActions.idle;
+  if(!input.fire && !input.aim){
+    wanted=moving
+      ? (sprint ? (upperBodyActions.run||upperBodyActions.walk||upperBodyActions.idle)
+                : (upperBodyActions.walk||upperBodyActions.idle))
+      : upperBodyActions.idle;
+  }
+
+  setUpperBodyAction(wanted,.10);
+
+  if(activeUpperBodyAction){
+    activeUpperBodyAction.enabled=true;
+    activeUpperBodyAction.setEffectiveWeight(
+      weaponState==='drawing'
+        ? THREE.MathUtils.clamp(
+            (performance.now()-weaponTransition.startedAt)/weaponTransition.duration,
+            0,1
+          )
+        : weaponState==='holstering'
+          ? THREE.MathUtils.clamp(
+              1-(performance.now()-weaponTransition.startedAt)/weaponTransition.duration,
+              0,1
+            )
+          : 1
+    );
+  }
 }
 
 async function loadCharacter(){
@@ -2443,6 +2530,12 @@ async function loadCharacter(){
     gunActions.Walk=gunActions.Walk||findClip(['walk_gun','walk_weapon'])||actions.Walk;
     gunActions.Run=gunActions.Run||findClip(['run_gun','run_weapon'])||actions.Run;
     gunActions.Jump=gunActions.Jump||findClip(['jump_gun','jump_weapon','run_gun_shoot'])||actions.Jump;
+
+    // Upper-body-only armed templates. These tracks override only the chest,
+    // arms and head, leaving the normal Idle/Walk/Run legs untouched.
+    upperBodyActions.idle=buildUpperBodyWeaponAction(gunActions.Idle||actions.Idle,'Idle');
+    upperBodyActions.walk=buildUpperBodyWeaponAction(gunActions.Walk||actions.Walk,'Walk');
+    upperBodyActions.run=buildUpperBodyWeaponAction(gunActions.Run||actions.Run,'Run');
 
     setAction('Idle',0);
     mixer.update(0);
@@ -2927,6 +3020,11 @@ function updatePlayer(dt,time){
   spawnRing.scale.setScalar(1.2-.2*ease);
   spawnRing.material.opacity=.72*(1-ease);
 
+  if(characterReady){
+    setAction(moving?(sprint?'Run':'Walk'):'Idle',.15);
+    updateUpperBodyWeaponTemplate(dt,moving,sprint);
+  }
+
   updateWeaponAnimation(dt);
   if(mixer) mixer.update(dt);
 
@@ -2938,10 +3036,6 @@ function updatePlayer(dt,time){
     fountain.userData.updateParticles(dt, time);
     fountain.userData.coreRing.rotation.z=time*.00055;
     fountain.userData.pool.rotation.y=time*.00005;
-  }
-
-  if(characterReady){
-    setAction(moving?(sprint?'Run':'Walk'):'Idle',.15);
   }
 
   if(weaponRoot){
@@ -3420,44 +3514,11 @@ function __CDDA_applyWeaponPose(dt){
   if(rigReady&&armBlend>.001){
     weaponRoot.updateMatrixWorld(true);
 
-    const currentR=weaponSockets.rightGrip
-      ? weaponSockets.rightGrip.getWorldPosition(new THREE.Vector3())
-      : targetHands.right.clone();
-    const currentL=weaponSockets.leftGrip
-      ? weaponSockets.leftGrip.getWorldPosition(new THREE.Vector3())
-      : targetHands.left.clone();
-
-    const blendedR=baseHands.right.clone().lerp(currentR,armBlend);
-    const blendedL=baseHands.left.clone().lerp(currentL,armBlend);
-
-    if(input.aim||input.fire){
-      __CDDA_restoreCombatNeutralPose();
-      characterRoot.updateMatrixWorld(true);
-    }
-
-    const worldQ=weaponRoot.getWorldQuaternion(new THREE.Quaternion());
-    const worldForward=new THREE.Vector3(0,0,1).applyQuaternion(worldQ).normalize();
-    const worldRight=new THREE.Vector3(1,0,0).applyQuaternion(worldQ).normalize();
-
-    const hintR=blendedR.clone()
-      .addScaledVector(worldRight,.20)
-      .addScaledVector(worldForward,-.22)
-      .add(new THREE.Vector3(0,-.08,.0));
-    const hintL=blendedL.clone()
-      .addScaledVector(worldRight,-.08)
-      .addScaledVector(worldForward,.12)
-      .add(new THREE.Vector3(0,-.05,.0));
-
-    __CDDA_solveArm('right',blendedR,hintR,armBlend);
-    characterRoot.updateMatrixWorld(true);
-    __CDDA_solveArm('left',blendedL,hintL,armBlend);
-    characterRoot.updateMatrixWorld(true);
-
-    // Final attachment pass: use the wrists that were actually solved above
-    // as the authoritative gun mounting points. This removes visible IK
-    // residuals, so the rifle follows both hands instead of floating beside them.
+    // The upper-body animation is now authoritative. Use the actual wrists
+    // produced by that template as the two physical gun attachment points.
     const solvedR=window.__CDDAWeaponBones.rightWrist.getWorldPosition(new THREE.Vector3());
     const solvedL=window.__CDDAWeaponBones.leftWrist.getWorldPosition(new THREE.Vector3());
+
     const attachedPosition=new THREE.Vector3();
     const attachedQuaternion=new THREE.Quaternion();
     __CDDA_weaponPoseFromGrips(
@@ -3466,14 +3527,17 @@ function __CDDA_applyWeaponPose(dt){
       attachedPosition,
       attachedQuaternion
     );
+
     const attachedLocalPosition=attachedPosition.clone();
     player.worldToLocal(attachedLocalPosition);
     const attachedLocalQuaternion=player.getWorldQuaternion(new THREE.Quaternion()).invert()
       .multiply(attachedQuaternion);
+
     weaponRoot.position.copy(attachedLocalPosition);
     weaponRoot.quaternion.copy(attachedLocalQuaternion);
     weaponRoot.updateMatrixWorld(true);
 
+    // Aim only changes the head/neck after the armed body template is locked.
     if(__CDDA_aimPoseWeight>.35){
       __CDDA_applyHeadAim(__CDDA_aimPoseWeight);
       characterRoot.updateMatrixWorld(true);

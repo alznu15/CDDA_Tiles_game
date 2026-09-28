@@ -2574,35 +2574,15 @@ function getCrosshairYaw(){
   return Math.atan2(cameraDir.x,cameraDir.z);
 }
 
-function getManualFacingYaw(){
-  // D has explicit priority, as requested. While D is held the player can
-  // deliberately face/strafe right even though the reticle is elsewhere.
-  // A is the mirrored left-hand override.
-  if(input.d){
-    const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
-    return Math.atan2(right.x,right.z);
-  }
-  if(input.a){
-    const left=new THREE.Vector3(-Math.cos(yaw),0,Math.sin(yaw));
-    return Math.atan2(left.x,left.z);
-  }
-  return null;
-}
-
-function updateCharacterFacing(dt){
+function updateReticleFacing(dt,response=11.5){
   if(!started) return;
 
-  const manualYaw=getManualFacingYaw();
-  const targetYaw=manualYaw ?? getCrosshairYaw();
-
+  const targetYaw=getCrosshairYaw();
   const diff=THREE.MathUtils.euclideanModulo(
     targetYaw-player.rotation.y+Math.PI,
     Math.PI*2
   )-Math.PI;
 
-  // Quick manual response; slightly softer retargeting when returning to
-  // the reticle after A/D release, so the body smoothly catches the aim.
-  const response=manualYaw!==null ? 24 : 11.5;
   player.rotation.y+=diff*Math.min(1,dt*response);
 }
 
@@ -2623,13 +2603,29 @@ function updatePlayer(dt,time){
   const sprint=input.shift;
   const speed=input.aim ? (sprint?8.2:4.9) : (sprint?10.5:6.2);
 
-  // Character facing is now controlled by the reticle at all times.
-  // A/D are the only manual facing overrides, with D taking precedence.
-  updateCharacterFacing(dt);
+  // Restore the original movement model:
+  // - WASD determines movement relative to the camera.
+  // - While moving normally, the character faces the actual movement vector.
+  // - RMB aim keeps the old camera-facing behavior.
+  // New addition only:
+  // - when WASD is released, the character smoothly returns to the reticle;
+  // - while firing, the character turns toward the reticle.
+  let movementStep=null;
+
+  if(input.aim && started){
+    const targetYaw=yaw+Math.PI;
+    const diff=THREE.MathUtils.euclideanModulo(
+      targetYaw-player.rotation.y+Math.PI,
+      Math.PI*2
+    )-Math.PI;
+    player.rotation.y+=diff*Math.min(1,dt*18);
+  }
 
   if(moving && started){
     const currentGround=groundHeightAt(player.position.x,player.position.z);
     const step=move.clone().multiplyScalar(speed*dt);
+    movementStep=step;
+
     const nx=player.position.x+step.x;
     const nz=player.position.z+step.z;
 
@@ -2646,8 +2642,24 @@ function updatePlayer(dt,time){
       player.position.z=nz;
     }
 
-    // A/D facing already owns body rotation. W/S movement follows the current
-    // reticle aim unless the player is explicitly strafing with A/D.
+    if(!input.aim && !input.fire){
+      const targetYaw=Math.atan2(step.x,step.z);
+      const diff=THREE.MathUtils.euclideanModulo(
+        targetYaw-player.rotation.y+Math.PI,
+        Math.PI*2
+      )-Math.PI;
+      player.rotation.y+=diff*Math.min(1,dt*12);
+    }
+  }
+
+  if(started && !input.aim){
+    if(input.fire){
+      // Fire immediately owns facing, even while WASD is held.
+      updateReticleFacing(dt,18);
+    }else if(!moving){
+      // Releasing all WASD smoothly returns the body to the reticle.
+      updateReticleFacing(dt,11.5);
+    }
   }
 
   const surfaceY=groundHeightAt(player.position.x,player.position.z);

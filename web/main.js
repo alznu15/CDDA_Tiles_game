@@ -1483,10 +1483,10 @@ function buildMap(){
   addSidewalk(128,0,4,300);
 
   // Four short pedestrian entries into the park.
-  addParkPath(0,-58.5,9,24,.19);
-  addParkPath(0,58.5,9,24,.19);
-  addParkPath(-58.5,0,24,9,.19);
-  addParkPath(58.5,0,24,9,.19);
+  addParkPath(0,-59,9,26,.19);
+  addParkPath(0,59,9,26,.19);
+  addParkPath(-59,0,26,9,.19);
+  addParkPath(59,0,26,9,.19);
 
   // Four broad pedestrian crossings connect the park gates to the ring road.
   // Keep the raised lamp/furniture strip outside this crossing footprint.
@@ -1580,6 +1580,16 @@ function buildMap(){
   addTree(-30,-4,.92);
   addTree(30,4,.96);
   addTree(-4,30,.92);
+
+  // Additional outer trees soften the city edge without closing the main combat lanes.
+  addTree(-92,-44,1.05);
+  addTree(-92,44,.98);
+  addTree(92,-44,1.0);
+  addTree(92,44,1.06);
+  addTree(-46,-92,.98);
+  addTree(46,-92,1.03);
+  addTree(-46,92,1.0);
+  addTree(46,92,.96);
 
   // Central landmark stays exactly where the whole layout can orient around it.
   addCentralFountain();

@@ -1966,9 +1966,6 @@ function applyAimPose(weight){
 }
 
 function updateWeaponState(dt){
-  const targetAim=input.aim?1:0;
-  aimWeight=THREE.MathUtils.damp(aimWeight,targetAim,16,dt);
-
   if(weaponRoot){
     const hipPos=new THREE.Vector3(.42,1.22,-.38);
     const aimPos=new THREE.Vector3(.18,1.38,-.62);
@@ -2550,9 +2547,11 @@ function updatePlayer(dt,time){
       player.position.z=nz;
     }
 
-    const targetYaw=Math.atan2(step.x,step.z);
-    const diff=THREE.MathUtils.euclideanModulo(targetYaw-player.rotation.y+Math.PI,Math.PI*2)-Math.PI;
-    player.rotation.y+=diff*Math.min(1,dt*12);
+    if(!input.aim){
+      const targetYaw=Math.atan2(step.x,step.z);
+      const diff=THREE.MathUtils.euclideanModulo(targetYaw-player.rotation.y+Math.PI,Math.PI*2)-Math.PI;
+      player.rotation.y+=diff*Math.min(1,dt*12);
+    }
   }
 
   const surfaceY=groundHeightAt(player.position.x,player.position.z);
@@ -2623,6 +2622,12 @@ function updatePlayer(dt,time){
   }
 
   if(weaponRoot){
+    aimWeight=THREE.MathUtils.damp(
+      aimWeight,
+      input.aim?1:0,
+      16,
+      dt
+    );
     applyAimPose(aimWeight);
     updateWeaponState(dt);
   }

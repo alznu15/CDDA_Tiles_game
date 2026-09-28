@@ -1899,7 +1899,8 @@ const characterMotion={
   traversal:false,
   traversalTimer:0,
   traversalDuration:.72,
-  landTimer:0
+  landTimer:0,
+  shootTimer:0
 };
 
 
@@ -2074,6 +2075,7 @@ function fireWeapon(){
   recoilKick=1;
   recoilPitch=.08;
   recoilYaw=(Math.random()-.5)*.045;
+  characterMotion.shootTimer=.12;
 
   const origin=camera.position.clone();
   const direction=getRoleForward();
@@ -2114,6 +2116,12 @@ function collectFullRig(){
       bone.quaternion.copy(base).slerp(base.clone().multiply(q),THREE.MathUtils.clamp(weight,0,1));
       return true;
     }
+  };
+  window.__CHARACTER_TEMPLATE__={
+    rig:window.__CHARACTER_RIG__,
+    animations:()=>[...rigAnimationCatalog.keys()],
+    state:()=>({...characterMotion,aimWeight,animation:currentAction?.getClip().name||null}),
+    play:name=>setAction(name,.08)
   };
 }
 
@@ -2300,6 +2308,118 @@ function applyCharacterRig(){
     applyFingerGrip(aimWeight);
   }
 }
+function pointInsideCollider(c,x,z,extra=.0){
+  if(c.shape==='circle'){
+    const dx=x-c.x,dz=z-c.z;
+    return dx*dx+dz*dz <= (c.radius+extra)*(c.radius+extra);
+  }
+  return Math.abs(x-c.x)<=c.w*.5+extra &&
+         Math.abs(z-c.z)<=c.d*.5+extra;
+}
+
+function findLowObstacle(moveDir){
+  if(!moveDir||moveDir.lengthSq()<1e-5) return null;
+  const probe=player.position.clone()
+    .addScaledVector(moveDir,playerRadius+.30);
+  let best=null;
+  let bestDistance=Infinity;
+
+  for(const c of staticColliders){
+    if(!c.jumpable) continue;
+    const baseY=Number.isFinite(c.baseY)?c.baseY:0;
+    const topY=Number.isFinite(c.surfaceHeight)
+      ? c.surfaceHeight
+      : baseY+(Number.isFinite(c.h)?c.h:32);
+    const height=topY-player.position.y;
+
+    // Traversal is specifically for low cover/obstacles, not buildings or
+    // tall structures.
+    if(height<.42 || height>1.18) continue;
+    if(topY<=player.position.y+.20) continue;
+    if(!pointInsideCollider(c,probe,.14)) continue;
+
+    const dx=(c.x-player.position.x),dz=(c.z-player.position.z);
+    const distanceSq=dx*dx+dz*dz;
+    if(distanceSq<bestDistance){
+      best=c;
+      bestDistance=distanceSq;
+    }
+  }
+  return best;
+}
+
+function beginLowObstacleTraversal(c,moveDir){
+  if(characterMotion.traversal||!c||!moveDir||!characterReady) return false;
+
+  const baseY=Number.isFinite(c.baseY)?c.baseY:0;
+  const topY=Number.isFinite(c.surfaceHeight)
+    ? c.surfaceHeight
+    : baseY+(Number.isFinite(c.h)?c.h:32);
+  const obstacleHeight=topY-player.position.y;
+  if(obstacleHeight<.42||obstacleHeight>1.18) return false;
+
+  const halfW=c.shape==='circle'?c.radius:c.w*.5;
+  const halfD=c.shape==='circle'?c.radius:c.d*.5;
+  const travel=Math.max(
+    1.0,
+    halfW*Math.abs(moveDir.x)+halfD*Math.abs(moveDir.z)+playerRadius+.55
+  );
+
+  characterMotion.traversal=true;
+  characterMotion.mode='traversal';
+  characterMotion.traversalTimer=0;
+  characterMotion.traversalDuration=obstacleHeight>.86?.78:.62;
+  characterMotion.traversalStart=player.position.clone();
+  characterMotion.traversalDir=moveDir.clone().normalize();
+  characterMotion.traversalTarget=player.position.clone()
+    .addScaledVector(characterMotion.traversalDir,travel);
+  characterMotion.traversalTop=topY;
+
+  // UAL2's ClimbUp_1m is the first choice. If this export omitted it,
+  // fall back to the normal jump-start motion.
+  setAction('ClimbUp',.08);
+  return true;
+}
+
+function updateLowObstacleTraversal(dt){
+  if(!characterMotion.traversal) return false;
+
+  characterMotion.traversalTimer+=dt;
+  const t=THREE.MathUtils.clamp(
+    characterMotion.traversalTimer/characterMotion.traversalDuration,
+    0,1
+  );
+  const eased=t<.5
+    ? 2*t*t
+    : 1-Math.pow(-2*t+2,2)/2;
+
+  const start=characterMotion.traversalStart;
+  const target=characterMotion.traversalTarget;
+  player.position.x=THREE.MathUtils.lerp(start.x,target.x,eased);
+  player.position.z=THREE.MathUtils.lerp(start.z,target.z,eased);
+
+  // Arched manual root motion keeps the climb usable with in-place GLB clips.
+  const arc=Math.sin(t*Math.PI);
+  const crest=Math.min(
+    characterMotion.traversalTop+.16,
+    characterMotion.traversalTop+.52
+  );
+  const arcY=characterMotion.traversalTop*(arc*.82)+crest*(arc*.18);
+  const floor=groundHeightAt(player.position.x,player.position.z);
+  player.position.y=Math.max(floor,arcY);
+
+  if(t>=1){
+    player.position.y=floor;
+    characterMotion.traversal=false;
+    characterMotion.mode='land';
+    characterMotion.landTimer=.16;
+    grounded=true;
+    verticalVelocity=0;
+    resolvePlayerPenetration();
+  }
+  return true;
+}
+
 
 function chooseAnimation(base){
   const key=normalizeBoneName(base);
@@ -2771,9 +2891,11 @@ function updateSprintJumpArm(){
 function updatePlayer(dt,time){
   updateSprintJumpArm();
 
+  const wasGrounded=grounded;
   const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
   const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
   const move=new THREE.Vector3();
+
   if(input.w) move.add(forward);
   if(input.s) move.sub(forward);
   if(input.d) move.add(right);
@@ -2785,68 +2907,105 @@ function updatePlayer(dt,time){
   const sprint=input.shift;
   const speed=input.aim ? (sprint?8.2:4.9) : (sprint?10.5:6.2);
 
-  if(input.aim && started){
-    const targetYaw=yaw+Math.PI;
-    const diff=THREE.MathUtils.euclideanModulo(targetYaw-player.rotation.y+Math.PI,Math.PI*2)-Math.PI;
-    player.rotation.y+=diff*Math.min(1,dt*18);
-  }
+  // While traversing a low obstacle, animation and manual root motion own the
+  // player for the short mantle window. Normal collision/movement is paused.
+  const traversing=updateLowObstacleTraversal(dt);
 
-  if(moving && started){
-    const currentGround=groundHeightAt(player.position.x,player.position.z);
-    const step=move.clone().multiplyScalar(speed*dt);
-    const nx=player.position.x+step.x;
-    const nz=player.position.z+step.z;
-
-    if(canTraverseTo(nx,player.position.z,currentGround,player.position.y,!grounded)){
-      player.position.x=nx;
-    }
-    if(canTraverseTo(player.position.x,nz,groundHeightAt(player.position.x,player.position.z),player.position.y,!grounded)){
-      player.position.z=nz;
+  if(!traversing){
+    if(input.aim && started){
+      const targetYaw=yaw+Math.PI;
+      const diff=THREE.MathUtils.euclideanModulo(
+        targetYaw-player.rotation.y+Math.PI,Math.PI*2
+      )-Math.PI;
+      player.rotation.y+=diff*Math.min(1,dt*18);
     }
 
-    if(!input.aim){
-      const targetYaw=Math.atan2(step.x,step.z);
-      const diff=THREE.MathUtils.euclideanModulo(targetYaw-player.rotation.y+Math.PI,Math.PI*2)-Math.PI;
-      player.rotation.y+=diff*Math.min(1,dt*12);
-    }
-  }
+    if(moving && started){
+      const currentGround=groundHeightAt(player.position.x,player.position.z);
+      const step=move.clone().multiplyScalar(speed*dt);
+      const nx=player.position.x+step.x;
+      const nz=player.position.z+step.z;
 
-  const surfaceY=groundHeightAt(player.position.x,player.position.z);
+      let movedNormally=false;
 
-  if(started){
-    // Tiny compatibility queue for platforms that deliver Space slightly late.
-    if(jumpRequest && grounded && performance.now()-lastSpaceDown<220){
-      performJump();
-      jumpRequest=false;
-    }else if(jumpRequest && performance.now()-lastSpaceDown>=220){
-      jumpRequest=false;
-    }
-
-    if(grounded){
-      // Terrain traversal is automatic: small road/sidewalk height changes are
-      // absorbed as a smooth footstep/step-up animation instead of requiring jump.
-      verticalVelocity=0;
-      player.position.y=THREE.MathUtils.damp(
+      if(canTraverseTo(nx,player.position.z,currentGround,player.position.y,!grounded)){
+        player.position.x=nx;
+        movedNormally=true;
+      }
+      if(canTraverseTo(
+        player.position.x,
+        nz,
+        groundHeightAt(player.position.x,player.position.z),
         player.position.y,
-        surfaceY,
-        terrainSnapRate,
-        dt
-      );
-    }else{
-      verticalVelocity+=gravity*dt;
-      const nextY=player.position.y+verticalVelocity*dt;
-      const coverTop=topSurfaceAt(player.position.x,player.position.z);
-      const landingY=Math.max(surfaceY,coverTop);
-      if(nextY<=landingY){
-        player.position.y=landingY;
-        verticalVelocity=0;
-        grounded=true;
-        resolvePlayerPenetration();
-      }else{
-        player.position.y=nextY;
-        grounded=false;
+        !grounded
+      )){
+        player.position.z=nz;
+        movedNormally=true;
+      }
+
+      // A blocked forward movement into low jumpable cover becomes a contextual
+      // traversal instead of a dead stop.
+      if(!movedNormally && grounded){
+        const obstacle=findLowObstacle(move);
+        if(obstacle) beginLowObstacleTraversal(obstacle,move);
+      }
+
+      if(!input.aim){
+        const targetYaw=Math.atan2(step.x,step.z);
+        const diff=THREE.MathUtils.euclideanModulo(
+          targetYaw-player.rotation.y+Math.PI,Math.PI*2
+        )-Math.PI;
+        player.rotation.y+=diff*Math.min(1,dt*12);
       }
     }
+
+    const surfaceY=groundHeightAt(player.position.x,player.position.z);
+
+    if(started){
+      if(jumpRequest && grounded && performance.now()-lastSpaceDown<220){
+        performJump();
+        jumpRequest=false;
+      }else if(jumpRequest && performance.now()-lastSpaceDown>=220){
+        jumpRequest=false;
+      }
+
+      if(grounded){
+        verticalVelocity=0;
+        player.position.y=THREE.MathUtils.damp(
+          player.position.y,
+          surfaceY,
+          terrainSnapRate,
+          dt
+        );
+      }else{
+        verticalVelocity+=gravity*dt;
+        const nextY=player.position.y+verticalVelocity*dt;
+        const coverTop=topSurfaceAt(player.position.x,player.position.z);
+        const landingY=Math.max(surfaceY,coverTop);
+
+        if(nextY<=landingY){
+          player.position.y=landingY;
+          verticalVelocity=0;
+          grounded=true;
+          resolvePlayerPenetration();
+        }else{
+          player.position.y=nextY;
+          grounded=false;
+        }
+      }
+    }
+  }
+
+  // Landing event is derived from actual physics state, so ordinary jumps and
+  // mantles both produce a brief landing pose.
+  if(!wasGrounded && grounded){
+    characterMotion.landTimer=.16;
+  }
+  if(characterMotion.landTimer>0){
+    characterMotion.landTimer=Math.max(0,characterMotion.landTimer-dt);
+  }
+  if(characterMotion.shootTimer>0){
+    characterMotion.shootTimer=Math.max(0,characterMotion.shootTimer-dt);
   }
 
   const spawnProgress=THREE.MathUtils.clamp((time-spawnTime)/900,0,1);
@@ -2862,19 +3021,33 @@ function updatePlayer(dt,time){
 
   const fountain=world.userData.fountain;
   if(fountain){
-    fountain.userData.updateParticles(dt, time);
+    fountain.userData.updateParticles(dt,time);
     fountain.userData.coreRing.rotation.z=time*.00055;
     fountain.userData.pool.rotation.y=time*.00005;
   }
 
   if(characterReady){
-    if(sprintJump.active){
-      const jumpAction=gunActions.Jump||actions.Jump||gunActions.Run||actions.Run||gunActions.Idle||actions.Idle;
-      if(jumpAction) setAction(jumpAction,.06);
-      sprintJump.phase=Math.min(1,(performance.now()-sprintJump.timer)/620);
-      if(sprintJump.phase>=1 && grounded) sprintJump.active=false;
+    if(characterMotion.traversal){
+      setAction('ClimbUp',.06);
+    }else if(characterMotion.landTimer>0){
+      setAction('JumpLand',.06);
+    }else if(!grounded){
+      if(verticalVelocity>1.5){
+        setAction('JumpStart',.07);
+      }else{
+        setAction('JumpLoop',.08);
+      }
+    }else if(characterMotion.shootTimer>0 && input.aim){
+      setAction('PistolShoot',.035);
+    }else if(input.aim && !moving){
+      setAction('Aim',.10);
     }else{
-      setAction(moving?(sprint?'Run':'Walk'):'Idle',.15);
+      setAction(
+        moving
+          ? (sprint?'Run':'Walk')
+          : 'Idle',
+        .10
+      );
     }
   }
 
@@ -2888,10 +3061,10 @@ function updatePlayer(dt,time){
     updateWeaponState(dt);
   }
 
-  if(input.fire) fireAccumulator+=dt;
-  while(input.fire && fireAccumulator>=.088){
-    fireAccumulator-=.088;
-    fireWeapon();
+  // Animation and full-body IK are deliberately applied AFTER mixer update:
+  // the authored clip supplies the base pose; IK customizes hands/fingers on top.
+  if(characterReady){
+    applyCharacterRig(dt);
   }
 }
 

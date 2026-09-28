@@ -434,6 +434,7 @@ function addBuilding(x,z,w,d,h,mat){
 
   // Gable roof: two correctly-sized halves meet at a real center ridge.
   const styleIndex=Math.abs(Math.round(x*.13+z*.07))%3;
+  let roofTop=h+.47;
   if(styleIndex===1){
     const roofRun=(d*.5)+.34;
     const roofAngle=THREE.MathUtils.degToRad(15);
@@ -445,6 +446,26 @@ function addBuilding(x,z,w,d,h,mat){
     roofA.rotation.x=roofAngle;
     roofB.rotation.x=-roofAngle;
     box(w+.70,.16,.24,0,h+rise+.06,0,MAT.roof,g);
+    roofTop=h+rise+.20;
+
+    const makeGableEnd=(z)=>{
+      const t=.055;
+      const verts=new Float32Array([
+        -w*.5,h,z-t, w*.5,h,z-t, 0,h+rise,z-t,
+        -w*.5,h,z+t, w*.5,h,z+t, 0,h+rise,z+t
+      ]);
+      const geom=new THREE.BufferGeometry();
+      geom.setAttribute('position',new THREE.BufferAttribute(verts,3));
+      geom.setIndex([0,1,2,5,4,3,0,3,4,0,4,1,1,4,5,1,5,2,2,5,3,2,3,0]);
+      geom.computeVertexNormals();
+      const cap=new THREE.Mesh(geom,facadeMat.clone());
+      cap.material.side=THREE.DoubleSide;
+      cap.castShadow=true;
+      cap.receiveShadow=true;
+      g.add(cap);
+    };
+    makeGableEnd(frontZ);
+    makeGableEnd(backZ);
   }else if(styleIndex===2){
     box(w+.5,.46,d+.5,0,h+.23,0,MAT.roof,g);
     box(Math.min(4.8,w*.42),.18,.9,0,h+.58,frontZ-.35,MAT.wood,g);
@@ -512,7 +533,7 @@ function addBuilding(x,z,w,d,h,mat){
   plaque.castShadow=true;
   g.add(plaque);
 
-  collider(x,z,w,d,.28,h+1.15);
+  collider(x,z,w,d,.18,roofTop);
 }
 
 function addTree(x,z,s=1){
@@ -669,12 +690,22 @@ function addParkPavilion(x,z,rot=0){
 
   box(6.35,.28,4.95,0,3.05,0,MAT.roof,g);
   box(5.85,.14,4.45,0,3.22,0,wood,g);
+  collider(x,z,6.35,4.95,.05,.28,null,false,false,2.91,3.19);
+  collider(x,z,5.85,4.45,.04,.14,null,false,false,3.15,3.29);
 
   // Connected beams visually tie the roof to the posts.
   box(5.95,.22,.26,0,2.84,-2.18,wood,g);
   box(5.95,.22,.26,0,2.84,2.18,wood,g);
   box(.26,.22,4.55,-2.92,2.84,0,wood,g);
   box(.26,.22,4.55,2.92,2.84,0,wood,g);
+  collider(x,z-2.18,5.95,.26,.04,.22,null,false,false,2.73,2.95);
+  collider(x,z+2.18,5.95,.26,.04,.22,null,false,false,2.73,2.95);
+  {
+    const [lx,lz]=toWorld(-2.92,0);
+    const [rx,rz]=toWorld(2.92,0);
+    orientedCollider(lx,lz,.26,4.55,.22,rot,.04,null,false,false,2.73,2.95);
+    orientedCollider(rx,rz,.26,4.55,.22,rot,.04,null,false,false,2.73,2.95);
+  }
 
   // Two partial walls create useful cover while leaving the pavilion enterable.
   box(5.55,1.55,.20,0,.775,1.98,stone,g);
@@ -701,12 +732,16 @@ function addParkKiosk(x,z,rot=0){
   // Roof and connected fascia.
   box(4.6,.24,3.55,0,2.93,0,MAT.roof,g);
   box(4.25,.14,3.18,0,3.11,0,MAT.wood,g);
+  const [roofX,roofZ]=toWorld(0,0);
+  orientedCollider(roofX,roofZ,4.6,3.55,.24,rot,.05,null,false,false,2.81,3.05);
   box(4.35,.18,.24,0,2.73,-1.6,MAT.wood,g);
   box(.24,.18,3.15,-2.18,2.73,0,MAT.wood,g);
   box(.24,.18,3.15,2.18,2.73,0,MAT.wood,g);
 
   // Front service counter with a clear standing gap.
   box(3.55,.68,.42,0,1.08,1.38,MAT.stone,g);
+  const [counterX,counterZ]=toWorld(0,1.38);
+  orientedCollider(counterX,counterZ,3.55,.42,.68,rot,.05,null,true,false,.74,1.42);
   box(3.6,.16,.14,0,2.35,1.38,MAT.wood,g);
   box(.22,2.65,.22,-1.85,1.325,1.35,MAT.wood,g);
   box(.22,2.65,.22,1.85,1.325,1.35,MAT.wood,g);
@@ -767,10 +802,19 @@ function addPlayground(x,z,rot=0){
   box(5.6,.45,.28,0,.225,-1.2,MAT.wood,g);
   box(.28,.45,2.15,-2.8,.225,0,MAT.wood,g);
   box(.28,.45,2.15,2.8,.225,0,MAT.wood,g);
+  {
+    const c=Math.cos(rot),s=Math.sin(rot);
+    const wp=(lx,lz)=>[x+lx*c-lz*s,z+lx*s+lz*c];
+    for(const [lx,lz,w,d] of [[0,1.2,5.6,.28],[0,-1.2,5.6,.28],[-2.8,0,.28,2.15],[2.8,0,.28,2.15]]){
+      const [px,pz]=wp(lx,lz);
+      orientedCollider(px,pz,w,d,.45,rot,.04,null,false,true);
+    }
+  }
 
   // Swing frame: connected top beam + four legs, not floating pieces.
   const swingY=3.0;
   box(7.0,.24,.24,0,swingY,0,MAT.metal,g);
+  orientedCollider(x,z,7.0,.24,.24,rot,.04,null,false,false,swingY-.12,swingY+.12);
   for(const px of [-3.1,3.1]){
     box(.24,swingY,.24,px,swingY/2,-.95,MAT.metal,g);
     box(.24,swingY,.24,px,swingY/2,.95,MAT.metal,g);
@@ -783,6 +827,12 @@ function addPlayground(x,z,rot=0){
   // Seats and chains.
   for(const sx of [-1.4,1.4]){
     const seat=box(1.05,.13,.38,sx,1.12,0,MAT.wood,g);
+    {
+      const c=Math.cos(rot),s=Math.sin(rot);
+      const seatX=x+sx*c;
+      const seatZ=z+sx*s;
+      orientedCollider(seatX,seatZ,1.05,.38,.13,rot,.03,null,true,false,1.055,1.185);
+    }
     const chainL=box(.035,1.75,.035,sx-.42,2.0,0,MAT.metal,g);
     const chainR=box(.035,1.75,.035,sx+.42,2.0,0,MAT.metal,g);
     chainL.material=MAT.metal;
@@ -800,10 +850,22 @@ function addPlayground(x,z,rot=0){
     }
   }
   box(10,.22,.22,0,2.72,2.95,MAT.metal,g);
+  {
+    const c=Math.cos(rot),s=Math.sin(rot);
+    const px=x-2.95*s;
+    const pz=z+2.95*c;
+    orientedCollider(px,pz,10,.22,.22,rot,.04,null,false,false,2.61,2.83);
+  }
 
   // Slide platform, ladder, rails, and a sloped slide.
   box(2.6,.24,2.4,-3.8,2.0,-2.8,MAT.wood,g);
   box(2.4,.18,1.7,-3.8,1.0,-1.8,MAT.metal,g);
+  {
+    const c=Math.cos(rot),s=Math.sin(rot);
+    const px=x+(-3.8)*c-(-1.8)*s;
+    const pz=z+(-3.8)*s+(-1.8)*c;
+    orientedCollider(px,pz,2.4,1.7,.18,rot,.03,null,false,false,.91,1.09);
+  }
   {
     const c=Math.cos(rot),s=Math.sin(rot);
     const px=x+(-3.8)*c-(-2.8)*s;
@@ -812,10 +874,24 @@ function addPlayground(x,z,rot=0){
   }
   const slide=box(1.9,.16,5.2,-3.8,.95,-4.2,MAT.wood,g);
   slide.rotation.x=.38;
+  {
+    const c=Math.cos(rot),s=Math.sin(rot);
+    const px=x+(-3.8)*c-(-4.2)*s;
+    const pz=z+(-3.8)*s+(-4.2)*c;
+    orientedCollider(px,pz,1.9,.16,5.2,rot+.38,.03,null,false,false,.84,1.06);
+  }
   const railL=box(.12,1.0,5.2,-4.9,1.35,-4.2,MAT.metal,g);
   const railR=box(.12,1.0,5.2,-2.7,1.35,-4.2,MAT.metal,g);
   railL.rotation.x=.38;
   railR.rotation.x=.38;
+  {
+    const c=Math.cos(rot),s=Math.sin(rot);
+    for(const [lx,lz] of [[-4.9,-4.2],[-2.7,-4.2]]){
+      const px=x+lx*c-lz*s;
+      const pz=z+lx*s+lz*c;
+      orientedCollider(px,pz,.12,5.2,1.0,rot+.38,.03,null,false,false,.85,1.85);
+    }
+  }
 
   // Large tree + low treehouse: a visual landmark and climbable low cover.
   const treeX=6.0, treeZ=-2.0;
@@ -899,7 +975,7 @@ function addCarouselRide(x,z,rot=0){
     rod.position.set(Math.cos(a)*2.75,1.48,Math.sin(a)*2.75);
     rod.castShadow=true; g.add(rod);
   }
-  collider(x,z,8.5,8.5,.1,.30,null,false,true,.02,.32);
+  circleCollider(x,z,4.72,.30,null,false,true,.02,.32);
   circleCollider(x,z,.55,2.8);
   g.userData.rotationSpeed=.18;
   return g;

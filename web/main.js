@@ -1887,6 +1887,7 @@ let gunActions={};
 // Separate weapon socket system: rifle starts on the back, then transitions
 // into a hand-driven two-point grip without being parented to an arm mesh.
 let weaponState='holstered'; // holstered | drawing | equipped | holstering
+let fireQueued=false;
 let weaponGraspAction=null;
 let weaponPoseWeight=0;
 const weaponTransition={
@@ -2241,6 +2242,7 @@ function spawnImpact(point){
 function fireWeapon(){
   if(!started||!weaponRoot) return;
   if(weaponState!=='equipped'){
+    fireQueued=true;
     beginWeaponDraw();
     return;
   }
@@ -2712,7 +2714,6 @@ addEventListener('mousedown',e=>{
     input.aim=true;
     e.preventDefault();
   }else if(e.button===0){
-    beginWeaponDraw();
     input.fire=true;
     fireWeapon();
   }
@@ -3369,9 +3370,17 @@ function __CDDA_applyWeaponPose(dt){
       weaponTransition.active=false;
       if(weaponTransition.target==='equipped'){
         weaponState='equipped';
+
+        // Complete a click that occurred while the rifle was holstered.
+        // This keeps a normal tap from losing its first shot during draw.
+        if(fireQueued){
+          fireQueued=false;
+          fireWeapon();
+        }
       }else{
         weaponState='holstered';
         __CDDA_aimPoseWeight=0;
+        fireQueued=false;
       }
     }
   }

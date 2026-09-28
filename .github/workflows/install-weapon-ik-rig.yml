@@ -1,0 +1,369 @@
+name: install-weapon-ik-rig
+on:
+  push:
+    paths:
+      - .github/workflows/install-weapon-ik-rig.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install independent weapon IK layer
+        run: |
+          cat > /tmp/weapon_rig.js <<'JS'
+
+function __CDDA_findBoneExact(name){
+  let found=null;
+  if(!characterRoot) return null;
+  characterRoot.traverse(o=>{
+    if(o.isBone && String(o.name||'').toLowerCase()===name.toLowerCase()) found=o;
+  });
+  return found;
+}
+
+const __CDDA_weaponRig={
+  rightGrip:new THREE.Vector3(0,-.18,-.42),
+  leftGrip:new THREE.Vector3(0,-.18,.70)
+};
+
+let __CDDA_weaponRigReady=false;
+let __CDDA_aimPoseWeight=0;
+
+function __CDDA_refreshWeaponRig(){
+  if(!characterRoot) return false;
+  const names={
+    rightUpper:'scout:upperarm01.r',
+    rightElbow:'scout:lowerarm01.r',
+    rightWrist:'scout:wrist.r',
+    leftUpper:'scout:upperarm01.l',
+    leftElbow:'scout:lowerarm01.l',
+    leftWrist:'scout:wrist.l',
+    neck1:'scout:neck01',
+    neck2:'scout:neck02',
+    neck3:'scout:neck03',
+    head:'scout:head'
+  };
+  const next={};
+  for(const [k,n] of Object.entries(names)){
+    next[k]=__CDDA_findBoneExact(n);
+  }
+  if(!next.rightUpper||!next.rightElbow||!next.rightWrist||!next.leftUpper||!next.leftElbow||!next.leftWrist){
+    return false;
+  }
+  aimBones={
+    rightHand:next.rightWrist,
+    leftHand:next.leftWrist,
+    rightLowerArm:next.rightElbow,
+    leftLowerArm:next.leftElbow,
+    rightUpperArm:next.rightUpper,
+    leftUpperArm:next.leftUpper
+  };
+  window.__CDDAWeaponBones=next;
+  __CDDA_weaponRigReady=true;
+  return true;
+}
+
+function __CDDA_setBoneWorldQuaternion(bone,worldQuaternion){
+  if(!bone) return;
+  if(!bone.parent){
+    bone.quaternion.copy(worldQuaternion);
+  }else{
+    const parentWorld=new THREE.Quaternion();
+    bone.parent.getWorldQuaternion(parentWorld);
+    bone.quaternion.copy(parentWorld.invert().multiply(worldQuaternion));
+  }
+  bone.updateMatrixWorld(true);
+}
+
+function __CDDA_alignBoneChain(rootBone,endBone,targetDirection){
+  if(!rootBone||!endBone||targetDirection.lengthSq()<1e-8) return;
+  const rootPos=rootBone.getWorldPosition(new THREE.Vector3());
+  const endPos=endBone.getWorldPosition(new THREE.Vector3());
+  const currentDir=endPos.sub(rootPos).normalize();
+  const desiredDir=targetDirection.clone().normalize();
+  const delta=new THREE.Quaternion().setFromUnitVectors(currentDir,desiredDir);
+  const currentWorldQ=new THREE.Quaternion();
+  rootBone.getWorldQuaternion(currentWorldQ);
+  __CDDA_setBoneWorldQuaternion(rootBone,delta.multiply(currentWorldQ));
+}
+
+function __CDDA_solveArm(side,targetWorld,hintWorld,weight){
+  const upper=side==='right'?window.__CDDAWeaponBones.rightUpper:window.__CDDAWeaponBones.leftUpper;
+  const elbow=side==='right'?window.__CDDAWeaponBones.rightElbow:window.__CDDAWeaponBones.leftElbow;
+  const wrist=side==='right'?window.__CDDAWeaponBones.rightWrist:window.__CDDAWeaponBones.leftWrist;
+  if(!upper||!elbow||!wrist||weight<=0) return;
+
+  const s=upper.getWorldPosition(new THREE.Vector3());
+  const e=elbow.getWorldPosition(new THREE.Vector3());
+  const w=wrist.getWorldPosition(new THREE.Vector3());
+  const l1=s.distanceTo(e);
+  const l2=e.distanceTo(w);
+  if(l1<.05||l2<.05) return;
+
+  const desiredW=w.clone().lerp(targetWorld,THREE.MathUtils.clamp(weight,0,1));
+  const axis=desiredW.clone().sub(s);
+  let d=axis.length();
+  if(d<.001) return;
+  const maxD=Math.max(.06,l1+l2-.018);
+  const minD=Math.abs(l1-l2)+.018;
+  d=THREE.MathUtils.clamp(d,minD,maxD);
+  axis.multiplyScalar(1/axis.length());
+
+  const hint=hintWorld.clone().sub(s);
+  hint.addScaledVector(axis,-hint.dot(axis));
+  if(hint.lengthSq()<1e-6){
+    hint.set(side==='right'?1:-1,0,0);
+    hint.addScaledVector(axis,-hint.dot(axis));
+  }
+  hint.normalize();
+
+  const along=(l1*l1+d*d-l2*l2)/(2*d);
+  const lateral=Math.sqrt(Math.max(0,l1*l1-along*along));
+  const elbowTarget=s.clone()
+    .addScaledVector(axis,along)
+    .addScaledVector(hint,lateral);
+
+  __CDDA_alignBoneChain(upper,elbow,elbowTarget.clone().sub(s));
+  characterRoot.updateMatrixWorld(true);
+
+  const elbowNow=elbow.getWorldPosition(new THREE.Vector3());
+  const wristNow=wrist.getWorldPosition(new THREE.Vector3());
+  const lowerDir=desiredW.clone().sub(elbowNow);
+  if(lowerDir.lengthSq()>1e-6){
+    __CDDA_alignBoneChain(elbow,wrist,lowerDir);
+  }
+}
+
+function __CDDA_weaponPoseFromGrips(rightGripWorld,leftGripWorld,outPosition,outQuaternion){
+  const forward=leftGripWorld.clone().sub(rightGripWorld);
+  if(forward.lengthSq()<1e-6) forward.copy(getRoleForward());
+  forward.normalize();
+
+  const up=new THREE.Vector3(0,1,0);
+  const right=new THREE.Vector3().crossVectors(up,forward);
+  if(right.lengthSq()<1e-6) right.set(1,0,0);
+  else right.normalize();
+  const correctedUp=new THREE.Vector3().crossVectors(forward,right).normalize();
+
+  weaponBasis.makeBasis(right,correctedUp,forward);
+  outQuaternion.setFromRotationMatrix(weaponBasis);
+
+  const scaledSocket=__CDDA_weaponRig.rightGrip.clone().multiplyScalar(weaponRoot?.scale.x||1);
+  scaledSocket.applyQuaternion(outQuaternion);
+  outPosition.copy(rightGripWorld).sub(scaledSocket);
+}
+
+function __CDDA_playerLocalPose(worldPosition,worldQuaternion){
+  const localPos=worldPosition.clone();
+  player.worldToLocal(localPos);
+  const invPlayer=player.getWorldQuaternion(new THREE.Quaternion()).invert();
+  return {position:localPos,quaternion:invPlayer.multiply(worldQuaternion)};
+}
+
+function __CDDA_getBaseHandTargets(){
+  const r=window.__CDDAWeaponBones.rightWrist.getWorldPosition(new THREE.Vector3());
+  const l=window.__CDDAWeaponBones.leftWrist.getWorldPosition(new THREE.Vector3());
+  return {right:r,left:l};
+}
+
+function __CDDA_getWeaponGripTargets(aimWeight){
+  const playerPos=player.getWorldPosition(new THREE.Vector3());
+  const forward=getRoleForward();
+  const rightAxis=new THREE.Vector3(1,0,0).applyQuaternion(player.getWorldQuaternion(new THREE.Quaternion())).normalize();
+  const up=new THREE.Vector3(0,1,0);
+
+  // Low-ready: both hands stay on the weapon, but the muzzle sits below the
+  // line of sight. Aim/fire raises both hands and squares the shoulders.
+  const rightHeight=THREE.MathUtils.lerp(1.18,1.34,aimWeight);
+  const leftHeight=THREE.MathUtils.lerp(1.08,1.34,aimWeight);
+  const rightForward=THREE.MathUtils.lerp(.40,.52,aimWeight);
+  const leftForward=THREE.MathUtils.lerp(.94,1.06,aimWeight);
+
+  const r=playerPos.clone()
+    .addScaledVector(rightAxis,.20)
+    .addScaledVector(up,rightHeight)
+    .addScaledVector(forward,rightForward);
+
+  const l=playerPos.clone()
+    .addScaledVector(rightAxis,-.20)
+    .addScaledVector(up,leftHeight)
+    .addScaledVector(forward,leftForward);
+
+  if(recoilKick>.001){
+    const recoil=forward.clone().multiplyScalar(-.045*recoilKick);
+    r.add(recoil); l.add(recoil);
+    r.y+=.018*recoilKick; l.y+=.012*recoilKick;
+  }
+
+  return {right:r,left:l};
+}
+
+function __CDDA_applyHeadAim(weight){
+  const bones=window.__CDDAWeaponBones;
+  if(!bones?.head||!bones?.neck1) return;
+
+  const playerPos=player.getWorldPosition(new THREE.Vector3());
+  const forward=getRoleForward();
+  const rightAxis=new THREE.Vector3(1,0,0).applyQuaternion(player.getWorldQuaternion(new THREE.Quaternion())).normalize();
+
+  const cameraDir=new THREE.Vector3();
+  camera.getWorldDirection(cameraDir);
+  cameraDir.y=0;
+  if(cameraDir.lengthSq()<1e-6) cameraDir.copy(forward);
+  cameraDir.normalize();
+
+  const yawTarget=Math.atan2(cameraDir.x,cameraDir.z);
+  const bodyYaw=player.rotation.y;
+  let relYaw=THREE.MathUtils.euclideanModulo(yawTarget-bodyYaw+Math.PI,Math.PI*2)-Math.PI;
+  relYaw=THREE.MathUtils.clamp(relYaw,-THREE.MathUtils.degToRad(32),THREE.MathUtils.degToRad(32));
+
+  // A small downward pitch makes the eyes track the sight/receiver instead of
+  // the horizon. The down-looking component is deliberately subtle.
+  const pitch=THREE.MathUtils.degToRad(7);
+
+  for(const [bone,share] of [
+    [bones.neck1,.25],[bones.neck2,.25],[bones.neck3,.20],[bones.head,.30]
+  ]){
+    if(!bone) continue;
+    const baseQ=bone.getWorldQuaternion(new THREE.Quaternion());
+    const qYaw=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),relYaw*weight*share);
+    const qPitch=new THREE.Quaternion().setFromAxisAngle(rightAxis,pitch*weight*share);
+    const desired=qPitch.multiply(qYaw).multiply(baseQ);
+    __CDDA_setBoneWorldQuaternion(bone,desired);
+  }
+}
+
+function __CDDA_restoreHeadPose(){
+  // Mixer re-applies the authored head pose next frame; this function is kept
+  // as a named hook for future head-look layers.
+}
+
+function __CDDA_applyWeaponPose(dt){
+  if(!weaponRoot||!characterRoot) return;
+
+  if(!__CDDA_weaponRigReady && !__CDDA_refreshWeaponRig()) return;
+  characterRoot.updateMatrixWorld(true);
+
+  let armBlend=1;
+  if(weaponState==='holstered') armBlend=0;
+  else if(weaponState==='drawing'){
+    armBlend=smoothWeaponT((performance.now()-weaponTransition.startedAt)/weaponTransition.duration);
+  }else if(weaponState==='holstering'){
+    armBlend=1-smoothWeaponT((performance.now()-weaponTransition.startedAt)/weaponTransition.duration);
+  }
+  armBlend=THREE.MathUtils.clamp(armBlend,0,1);
+  weaponPoseWeight=armBlend;
+
+  const poseWanted=(input.aim||input.fire||recoilKick>.08)?1:0;
+  __CDDA_aimPoseWeight=THREE.MathUtils.damp(__CDDA_aimPoseWeight,poseWanted,input.fire?34:13,dt);
+
+  const baseHands=__CDDA_getBaseHandTargets();
+  const targetHands=__CDDA_getWeaponGripTargets(__CDDA_aimPoseWeight);
+  const blendedR=baseHands.right.clone().lerp(targetHands.right,armBlend);
+  const blendedL=baseHands.left.clone().lerp(targetHands.left,armBlend);
+
+  if(armBlend>.001){
+    const p=player.getWorldPosition(new THREE.Vector3());
+    const hintR=blendedR.clone().add(
+      new THREE.Vector3(1,0,0).applyQuaternion(player.getWorldQuaternion(new THREE.Quaternion())).multiplyScalar(.50)
+    ).addScaledVector(new THREE.Vector3(0,-1,.20),.15);
+    const hintL=blendedL.clone().add(
+      new THREE.Vector3(-1,0,0).applyQuaternion(player.getWorldQuaternion(new THREE.Quaternion())).multiplyScalar(.42)
+    ).addScaledVector(new THREE.Vector3(0,-1,.20),.15);
+
+    // Right hand = rear/trigger grip. Left hand = forward support grip.
+    __CDDA_solveArm('right',blendedR,hintR,armBlend);
+    characterRoot.updateMatrixWorld(true);
+    __CDDA_solveArm('left',blendedL,hintL,armBlend);
+    characterRoot.updateMatrixWorld(true);
+
+    if(__CDDA_aimPoseWeight>.01){
+      __CDDA_applyHeadAim(__CDDA_aimPoseWeight);
+      characterRoot.updateMatrixWorld(true);
+    }
+  }
+
+  const readyPose=__CDDA_weaponPoseFromGrips(
+    targetHands.right,targetHands.left,
+    new THREE.Vector3(),new THREE.Quaternion()
+  );
+  const ready=__CDDA_playerLocalPose(readyPose.position,readyPose.quaternion);
+
+  const holsterPos=weaponHolsterPosition.clone();
+  const holsterQ=weaponHolsterQuaternion.clone();
+
+  if(armBlend<.999){
+    weaponRoot.position.lerpVectors(holsterPos,ready.position,armBlend);
+    weaponRoot.quaternion.copy(holsterQ).slerp(ready.quaternion,armBlend);
+  }else{
+    weaponRoot.position.copy(ready.position);
+    weaponRoot.quaternion.copy(ready.quaternion);
+  }
+
+  weaponRoot.position.z-=recoilKick*.012;
+
+  if(muzzleFlash){
+    muzzleFlash.visible=recoilKick>.06&&weaponState!=='holstered';
+    muzzleFlash.scale.setScalar(.74+recoilKick*.95);
+  }
+
+  aimWeight=THREE.MathUtils.damp(aimWeight,input.aim?1:0,16,dt);
+  recoilKick=Math.max(0,recoilKick-dt*8.5);
+  recoilYaw=THREE.MathUtils.damp(recoilYaw,0,12,dt);
+  recoilPitch=THREE.MathUtils.damp(recoilPitch,0,12,dt);
+
+  if(weaponTransition.active){
+    const raw=(performance.now()-weaponTransition.startedAt)/weaponTransition.duration;
+    if(raw>=1){
+      weaponTransition.active=false;
+      if(weaponTransition.target==='equipped'){
+        weaponState='equipped';
+      }else{
+        weaponState='holstered';
+        __CDDA_aimPoseWeight=0;
+      }
+    }
+  }
+}
+
+// Replace the old "grasp clip" layer. The character asset's grasp clip is kept
+// as source material, but it no longer drives the arms into a mismatched pose.
+updateWeaponAnimation=function(dt){
+  if(weaponGraspAction){
+    weaponGraspAction.enabled=false;
+    weaponGraspAction.setEffectiveWeight(0);
+  }
+};
+
+updateWeaponState=function(dt){
+  __CDDA_applyWeaponPose(dt);
+};
+
+JS
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("web/main.js")
+          s=p.read_text()
+          marker="const clock=new THREE.Clock();"
+          if "CDDA independent weapon IK layer" in s:
+              raise SystemExit("weapon IK already installed")
+          block=Path("/tmp/weapon_rig.js").read_text()
+          s=s.replace(marker,"// CDDA independent weapon IK layer\n"+block+"\n"+marker,1)
+          s=s.replace("const weaponHolsterPosition=new THREE.Vector3(.30,1.27,-.30);","const weaponHolsterPosition=new THREE.Vector3(.28,1.34,-.46);")
+          s=s.replace("const weaponHolsterEuler=new THREE.Euler(-.58,Math.PI,.14,'YXZ');","const weaponHolsterEuler=new THREE.Euler(-.72,Math.PI,.10,'YXZ');")
+          s=s.replace("weaponRoot.scale.setScalar(.72);","weaponRoot.scale.setScalar(.60);")
+          p.write_text(s)
+          PY
+      - name: Syntax check
+        run: node --check web/main.js
+      - name: Commit patch and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/main.js
+          git rm .github/workflows/install-weapon-ik-rig.yml
+          git commit -m "feat(character): add independent two-hand weapon IK"
+          git push

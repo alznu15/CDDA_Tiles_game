@@ -107,12 +107,12 @@ const box = (sx,sy,sz,x,y,z,mat,parent=world) => {
   return m;
 };
 
-function collider(x,z,w,d,pad=.7,h=32) {
-  staticColliders.push({x,z,w:w+pad,d:d+pad,h});
+function collider(x,z,w,d,pad=.7,h=32,passable=null) {
+  staticColliders.push({x,z,w:w+pad,d:d+pad,h,passable});
 }
 
-function addWalkableSurface(x,z,w,d,height){
-  walkableSurfaces.push({x,z,w,d,height});
+function addWalkableSurface(x,z,w,d,height,heightAt=null){
+  walkableSurfaces.push({x,z,w,d,height,heightAt});
 }
 
 function groundHeightAt(x,z){
@@ -120,10 +120,10 @@ function groundHeightAt(x,z){
   for(const s of walkableSurfaces){
     if(
       Math.abs(x-s.x)<=s.w*.5 &&
-      Math.abs(z-s.z)<=s.d*.5 &&
-      s.height>height
+      Math.abs(z-s.z)<=s.d*.5
     ){
-      height=s.height;
+      const sample=s.heightAt ? s.heightAt(x,z) : s.height;
+      if(sample>height) height=sample;
     }
   }
   return height;
@@ -132,6 +132,7 @@ function groundHeightAt(x,z){
 function isBlocked(x,z,r=.55) {
   if (x < -146 || x > 146 || z < -146 || z > 146) return true;
   for (const c of staticColliders) {
+    if(c.passable && c.passable(x,z)) continue;
     if (Math.abs(x-c.x) < c.w*.5+r && Math.abs(z-c.z) < c.d*.5+r) return true;
   }
   return false;
@@ -200,59 +201,138 @@ function addCentralFountain(){
   g.position.set(0,.25,0);
   world.add(g);
 
-  const basinMat=new THREE.MeshStandardMaterial({color:0x59666b,roughness:.55,metalness:.3});
-  const trimMat=new THREE.MeshStandardMaterial({color:0xaec4c9,roughness:.32,metalness:.58});
+  const basinMat=new THREE.MeshStandardMaterial({color:0x48545a,roughness:.42,metalness:.42});
+  const trimMat=new THREE.MeshStandardMaterial({color:0xc1d2d6,roughness:.24,metalness:.62});
   const waterMat=new THREE.MeshStandardMaterial({
-    color:0x59cfe8,
-    roughness:.08,
-    metalness:.18,
+    color:0x48c7e8,
+    roughness:.06,
+    metalness:.14,
     transparent:true,
-    opacity:.78
+    opacity:.72,
+    depthWrite:false
+  });
+  const glowMat=new THREE.MeshStandardMaterial({
+    color:0x72e0f4,
+    emissive:0x1b7992,
+    emissiveIntensity:1.6,
+    roughness:.18,
+    metalness:.2
+  });
+  const rippleMat=()=>new THREE.MeshBasicMaterial({
+    color:0xbaf5ff,
+    transparent:true,
+    opacity:.45,
+    depthWrite:false,
+    side:THREE.DoubleSide
   });
 
-  const base=new THREE.Mesh(new THREE.CylinderGeometry(5.3,5.7,.45,40),basinMat);
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(5.35,5.75,.46,48),basinMat);
   base.position.y=.23;
   base.castShadow=true;
   base.receiveShadow=true;
   g.add(base);
 
-  const inner=new THREE.Mesh(new THREE.CylinderGeometry(4.55,4.75,.22,40),waterMat);
-  inner.position.y=.50;
+  const lowerTrim=new THREE.Mesh(new THREE.TorusGeometry(5.25,.18,10,56),trimMat);
+  lowerTrim.rotation.x=Math.PI/2;
+  lowerTrim.position.y=.48;
+  lowerTrim.castShadow=true;
+  g.add(lowerTrim);
+
+  const inner=new THREE.Mesh(new THREE.CylinderGeometry(4.66,4.78,.13,48),waterMat);
+  inner.position.y=.53;
   inner.receiveShadow=true;
   g.add(inner);
 
-  const ring=new THREE.Mesh(new THREE.TorusGeometry(4.85,.17,10,48),trimMat);
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(4.92,.16,10,56),trimMat);
   ring.rotation.x=Math.PI/2;
-  ring.position.y=.64;
+  ring.position.y=.70;
   ring.castShadow=true;
   g.add(ring);
 
-  const pedestal=new THREE.Mesh(new THREE.CylinderGeometry(1.15,1.42,1.6,20),trimMat);
-  pedestal.position.y=1.18;
+  const pedestal=new THREE.Mesh(new THREE.CylinderGeometry(1.18,1.5,1.58,24),trimMat);
+  pedestal.position.y=1.22;
   pedestal.castShadow=true;
   pedestal.receiveShadow=true;
   g.add(pedestal);
 
-  const core=new THREE.Mesh(new THREE.SphereGeometry(.72,20,14),waterMat);
-  core.position.y=2.05;
+  const pedestalGlow=new THREE.Mesh(new THREE.TorusGeometry(1.16,.08,8,32),glowMat);
+  pedestalGlow.rotation.x=Math.PI/2;
+  pedestalGlow.position.y=1.42;
+  g.add(pedestalGlow);
+
+  const core=new THREE.Mesh(new THREE.SphereGeometry(.72,24,16),glowMat);
+  core.position.y=2.06;
   core.castShadow=true;
   g.add(core);
 
+  const coreRing=new THREE.Mesh(new THREE.TorusGeometry(.88,.055,8,32),glowMat);
+  coreRing.rotation.x=Math.PI/2;
+  coreRing.position.y=2.06;
+  g.add(coreRing);
+
   const jets=[];
-  for(const p of [[1.0,0],[0,1.0],[-1.0,0],[0,-1.0]]){
-    const jet=new THREE.Mesh(
-      new THREE.CylinderGeometry(.07,.15,1.2,10),
-      waterMat
-    );
-    jet.position.set(p[0],1.45,p[1]);
+  const jetDroplets=[];
+  for(const [idx,p] of [[0,[1.02,0]],[1,[0,1.02]],[2,[-1.02,0]],[3,[0,-1.02]]]){
+    const jet=new THREE.Mesh(new THREE.CylinderGeometry(.055,.12,1.25,10),waterMat);
+    jet.position.set(p[0],1.46,p[1]);
     jet.castShadow=true;
     g.add(jet);
     jets.push(jet);
+
+    const drop=new THREE.Mesh(new THREE.SphereGeometry(.075,10,8),waterMat);
+    drop.position.set(p[0],2.04,p[1]);
+    g.add(drop);
+    jetDroplets.push({mesh:drop,phase:idx*.7});
   }
 
+  const ripples=[];
+  for(let i=0;i<4;i++){
+    const ripple=new THREE.Mesh(
+      new THREE.TorusGeometry(.85+i*.45,.035,6,32),
+      rippleMat()
+    );
+    ripple.rotation.x=Math.PI/2;
+    ripple.position.y=.625;
+    g.add(ripple);
+    ripples.push(ripple);
+  }
+
+  // Low-angle ramp: walk onto the fountain instead of jumping onto it.
+  const rampWidth=2.7;
+  const rampStartZ=-7.0;
+  const rampEndZ=-4.05;
+  const rampStartY=.25;
+  const rampEndY=.67;
+  const rampLength=rampEndZ-rampStartZ;
+  const rampAngle=-Math.atan2(rampEndY-rampStartY,rampLength);
+  const ramp=box(
+    rampWidth,.18,rampLength,
+    0,(rampStartY+rampEndY)/2,(rampStartZ+rampEndZ)/2,
+    basinMat,g
+  );
+  ramp.rotation.x=rampAngle;
+
+  addWalkableSurface(
+    0,(rampStartZ+rampEndZ)/2,rampWidth,rampLength,rampStartY,
+    (x,z)=>{
+      const t=THREE.MathUtils.clamp((z-rampStartZ)/(rampEndZ-rampStartZ),0,1);
+      return THREE.MathUtils.lerp(rampStartY,rampEndY,t);
+    }
+  );
+
+  // Approximate the circular fountain collision, with the south ramp as the opening.
+  collider(0,0,11.5,11.5,.25,2.8,(x,z)=>z<-4.0 && Math.abs(x)<1.45);
+
+  const light=new THREE.PointLight(0x76eaff,2.0,12,2);
+  light.position.set(0,2.1,0);
+  g.add(light);
+
   g.userData.jets=jets;
+  g.userData.jetDroplets=jetDroplets;
+  g.userData.ripples=ripples;
+  g.userData.coreRing=coreRing;
+  g.userData.waterSurface=inner;
   world.userData.fountain=g;
-  collider(0,0,5.8,5.8,.35,2.8);
 }
 
 function addPlazaFurniture(){
@@ -270,6 +350,9 @@ function addPlazaFurniture(){
     box(2.7,.8,.18,0,-.25,-.25,benchMat,g);
     box(.16,.45,.55,-1.2,-.1,.18,benchMat,g);
     box(.16,.45,.55,1.2,-.1,.18,benchMat,g);
+
+    const benchAlongX=Math.abs(Math.sin(rot))<0.5;
+    collider(x,z,benchAlongX?3.8:.95,benchAlongX?.95:3.8,.12,1.1);
   }
 
   const planterMat=new THREE.MeshStandardMaterial({color:0x536067,roughness:.8});
@@ -287,6 +370,43 @@ function addPlazaFurniture(){
     plant.castShadow=true;
     plant.receiveShadow=true;
     world.add(plant);
+    collider(x,z,1.75,1.75,.12,1.6);
+  }
+}
+
+function addUrbanDetails(){
+  const detailMat=new THREE.MeshStandardMaterial({color:0x606a6f,roughness:.66,metalness:.48});
+  const darkMat=new THREE.MeshStandardMaterial({color:0x20272b,roughness:.9,metalness:.18});
+  const lightMat=new THREE.MeshStandardMaterial({color:0xc9d4d6,roughness:.42,metalness:.2});
+
+  // Crosswalks and small flush street details around the central junction.
+  for(const z of [-11.2,11.2]){
+    for(let i=-4;i<=4;i++) box(1.6,.012,.34,i*2,z,lightMat);
+  }
+  for(const x of [-11.2,11.2]){
+    for(let i=-4;i<=4;i++) box(.34,.012,1.6,x,i*2,lightMat);
+  }
+
+  for(const [x,z] of [[-7,-7],[7,-7],[-7,7],[7,7]]){
+    const manhole=new THREE.Mesh(new THREE.CylinderGeometry(.62,.62,.035,24),darkMat);
+    manhole.position.set(x,.155,z);
+    manhole.receiveShadow=true;
+    world.add(manhole);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(.62,.03,6,24),detailMat);
+    ring.rotation.x=Math.PI/2;
+    ring.position.set(x,.176,z);
+    world.add(ring);
+  }
+
+  for(const [x,z] of [[-18,-18],[18,-18],[-18,18],[18,18]]){
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(.13,.16,.85,12),detailMat);
+    post.position.set(x,.43,z);
+    post.castShadow=true;
+    world.add(post);
+    const cap=new THREE.Mesh(new THREE.CylinderGeometry(.18,.18,.08,12),lightMat);
+    cap.position.set(x,.86,z);
+    world.add(cap);
+    collider(x,z,.38,.38,.06,.9);
   }
 }
 
@@ -331,8 +451,9 @@ function buildMap(){
   // Central landmark: a solid sci-fi fountain with a shallow basin and four animated water jets.
   addCentralFountain();
 
-  // Small environmental details make the district feel inhabited without cluttering the traversal lanes.
+  // Environmental details keep the district visually rich without cluttering traversal lanes.
   addPlazaFurniture();
+  addUrbanDetails();
 }
 buildMap();
 
@@ -865,8 +986,33 @@ function updatePlayer(dt,time){
   spawnRing.material.opacity=.72*(1-ease);
 
   if(mixer) mixer.update(dt);
+
   const fountain=world.userData.fountain;
-  if(fountain){ /* reserved for future fountain animation */ }
+  if(fountain){
+    const cycle=time*.003;
+    fountain.userData.jets.forEach((jet,i)=>{
+      const wave=.88+.16*Math.sin(cycle*2.2+i*.9);
+      jet.scale.y=wave;
+      jet.rotation.z=Math.sin(cycle*1.5+i)*.015;
+    });
+
+    fountain.userData.jetDroplets.forEach((item)=>{
+      const t=(cycle*1.4+item.phase)%1;
+      item.mesh.position.y=2.22-(t*t)*1.72;
+      item.mesh.scale.setScalar(.72+.28*Math.sin(Math.PI*t));
+      item.mesh.material.opacity=.24+.48*(1-t);
+    });
+
+    fountain.userData.ripples.forEach((r,i)=>{
+      const t=(cycle*.52+i*.25)%1;
+      r.scale.setScalar(.55+t*1.85);
+      r.material.opacity=.42*(1-t);
+    });
+
+    fountain.userData.coreRing.rotation.z=cycle*.55;
+    fountain.userData.waterSurface.rotation.y=cycle*.08;
+  }
+
   if(characterReady){
     if(sprintJump.active){
       const jumpAction=actions.Jump||actions.Run||actions.Idle;

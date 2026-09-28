@@ -655,9 +655,6 @@ function addPlayground(x,z,rot=0){
 }
 
 
-  points.forEach(([x,z,scale])=>addTree(x,z,scale||s));
-}
-
 function addCentralFountain(){
   const g=new THREE.Group();
   world.add(g);

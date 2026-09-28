@@ -1898,6 +1898,7 @@ const characterMotion={
   landTimer:0,
   fireTimer:0
 };
+let wasAiming=false;
 
 const upperBodyBonePattern=/^(Head|Neck|Chest|Torso|Abdomen|Shoulder\\.[LR]|UpperArm\\.[LR]|LowerArm\\.[LR]|Wrist\\.[LR]|UpperHand\\.[LR]|LowerHand\\.[LR]|UpperThumb\\.[LR]|LowerThumb\\.[LR]|Thumb[123]\\.[LR]|(Index|Middle|Ring|Pinky)[1-4]\\.[LR])(?:\\.|$)/i;
 
@@ -1989,6 +1990,68 @@ function rememberClip(name,action){
   characterAnimations.set(name.toLowerCase(),action);
 }
 
+function quatFromEuler(rx,ry,rz){
+  return new THREE.Quaternion().setFromEuler(new THREE.Euler(rx,ry,rz,'XYZ'));
+}
+
+function makeCustomJumpClip(){
+  const duration=.78;
+  const times=[0,.12,.28,.48,.64,.78];
+  const poseTrack=(boneName,poses)=>{
+    const values=[];
+    for(const p of poses){
+      const q=quatFromEuler(p[0],p[1],p[2]);
+      values.push(q.x,q.y,q.z,q.w);
+    }
+    return new THREE.QuaternionKeyframeTrack(
+      boneName+'.quaternion',times,values
+    );
+  };
+
+  return new THREE.AnimationClip('Jump',duration,[
+    poseTrack('Hips',[
+      [0,0,0],[-.05,0,0],[-.10,0,0],[.04,0,0],[.02,0,0],[0,0,0]
+    ]),
+    poseTrack('UpperLeg.L',[
+      [0,0,0],[.28,0,0],[.52,0,0],[.24,0,0],[-.10,0,0],[0,0,0]
+    ]),
+    poseTrack('UpperLeg.R',[
+      [0,0,0],[.24,0,0],[.48,0,0],[.20,0,0],[-.08,0,0],[0,0,0]
+    ]),
+    poseTrack('LowerLeg.L',[
+      [0,0,0],[-.48,0,0],[-.92,0,0],[-.52,0,0],[.14,0,0],[0,0,0]
+    ]),
+    poseTrack('LowerLeg.R',[
+      [0,0,0],[-.44,0,0],[-.86,0,0],[-.46,0,0],[.12,0,0],[0,0,0]
+    ]),
+    poseTrack('Foot.L',[
+      [0,0,0],[.18,0,0],[.28,0,0],[.10,0,0],[-.16,0,0],[0,0,0]
+    ]),
+    poseTrack('Foot.R',[
+      [0,0,0],[.16,0,0],[.26,0,0],[.09,0,0],[-.14,0,0],[0,0,0]
+    ]),
+    poseTrack('Chest',[
+      [0,0,0],[-.07,0,0],[-.12,0,0],[.06,0,0],[.02,0,0],[0,0,0]
+    ]),
+    poseTrack('Head',[
+      [0,0,0],[.03,0,0],[.05,0,0],[-.02,0,0],[-.01,0,0],[0,0,0]
+    ]),
+    poseTrack('Shoulder.L',[
+      [0,0,0],[.10,0,.08],[.18,0,.10],[.08,0,.05],[-.03,0,0],[0,0,0]
+    ]),
+    poseTrack('Shoulder.R',[
+      [0,0,0],[.10,0,-.08],[.18,0,-.10],[.08,0,-.05],[-.03,0,0],[0,0,0]
+    ]),
+    poseTrack('UpperArm.L',[
+      [0,0,0],[-.12,0,.08],[-.28,0,.14],[-.10,0,.05],[.06,0,0],[0,0,0]
+    ]),
+    poseTrack('UpperArm.R',[
+      [0,0,0],[-.12,0,-.08],[-.28,0,-.14],[-.10,0,-.05],[.06,0,0],[0,0,0]
+    ])
+  ]);
+}
+
+
 function buildAnimationLibrary(gltf,extraData){
   mixer=new THREE.AnimationMixer(characterRoot);
   actions={};
@@ -2013,6 +2076,10 @@ function buildAnimationLibrary(gltf,extraData){
     const lowerClip=filterLowerBodyClip(clip,clip.name+'_Lower');
     lowerBodyAnimations.set(clip.name.toLowerCase(),mixer.clipAction(lowerClip));
   }
+
+  const customJump=makeCustomJumpClip();
+  actions.Jump=mixer.clipAction(customJump);
+  rememberClip('Jump',actions.Jump);
 
   for(const data of extraData.animations||[]){
     let clip=buildGodotClip(data);
@@ -2642,6 +2709,8 @@ function updateSprintJumpArm(){
   if(!combo){
     sprintJumpComboArmed=false;
   }
+
+  wasAiming=input.aim;
 }
 
 function findLowObstacle(moveDir){
@@ -2773,8 +2842,10 @@ function updateUpperBodyAnimation(moving,sprinting){
       aim.setLoop(THREE.LoopOnce,1);
       aim.clampWhenFinished=true;
       aim.setEffectiveWeight(.8);
-      if(!aim.isRunning() && aim.time<aim.getClip().duration-.0001){
+      if(!wasAiming){
         aim.reset().fadeIn(.05).play();
+      }else if(!aim.isRunning()){
+        aim.time=aim.getClip().duration;
       }
     }
   }else if(nativeIdle){
@@ -2787,6 +2858,10 @@ function updateUpperBodyAnimation(moving,sprinting){
   if(characterMotion.fireTimer>0){
     const shot=aimFire||upperBodyAnimations.get('gun_shoot');
     if(shot){
+      if(hold) hold.setEffectiveWeight(0);
+      if(aim) aim.setEffectiveWeight(0);
+      if(nativePoint) nativePoint.setEffectiveWeight(0);
+      if(nativeIdle) nativeIdle.setEffectiveWeight(0);
       shot.enabled=true;
       shot.setLoop(THREE.LoopOnce,1);
       shot.clampWhenFinished=true;
@@ -2937,7 +3012,7 @@ function updatePlayer(dt,time){
     let lowerLocomotionAction=null;
 
     if(!grounded){
-      fullLocomotionAction=actions.Run||actions.Idle;
+      fullLocomotionAction=actions.Jump||actions.Run||actions.Idle;
     }else if(moving){
       if(input.a&&!input.d) fullLocomotionAction=actions.Run_Left||actions.Run;
       else if(input.d&&!input.a) fullLocomotionAction=actions.Run_Right||actions.Run;

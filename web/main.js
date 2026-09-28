@@ -48,9 +48,9 @@ if (!engineLoaded) {
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8fa9b5);
-scene.fog = new THREE.Fog(0x8fa9b5, 95, 280);
+scene.fog = new THREE.Fog(0x8fa9b5, 120, 340);
 
-const camera = new THREE.PerspectiveCamera(67, innerWidth / innerHeight, 0.1, 360);
+const camera = new THREE.PerspectiveCamera(67, innerWidth / innerHeight, 0.1, 430);
 const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
 renderer.setSize(innerWidth, innerHeight);
@@ -66,10 +66,10 @@ const sun = new THREE.DirectionalLight(0xffe7c2, 2.25);
 sun.position.set(-65, 110, 45);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1536,1536);
-sun.shadow.camera.left = -150;
-sun.shadow.camera.right = 150;
-sun.shadow.camera.top = 150;
-sun.shadow.camera.bottom = -150;
+sun.shadow.camera.left = -190;
+sun.shadow.camera.right = 190;
+sun.shadow.camera.top = 190;
+sun.shadow.camera.bottom = -190;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 320;
 scene.add(sun);
@@ -122,17 +122,26 @@ const MAT = {
   glass:new THREE.MeshPhysicalMaterial({color:0x8dc0d0,roughness:.11,metalness:.16,transparent:true,opacity:.76,transmission:.1,ior:1.45,thickness:.03,clearcoat:.55,clearcoatRoughness:.12}),
   metal:new THREE.MeshStandardMaterial({color:0x657078,roughness:.48,metalness:.65}),
   green:new THREE.MeshStandardMaterial({color:0x2f5536,roughness:1}),
-  trunk:new THREE.MeshStandardMaterial({color:0x584536,roughness:1})
+  trunk:new THREE.MeshStandardMaterial({color:0x584536,roughness:1}),
+  wood:new THREE.MeshStandardMaterial({color:0x765542,roughness:.82}),
+  brick:new THREE.MeshStandardMaterial({color:0x713f34,roughness:.88}),
+  stone:new THREE.MeshStandardMaterial({color:0x687174,roughness:.82}),
+  hedge:new THREE.MeshStandardMaterial({color:0x31553a,roughness:.94}),
+  parkPath:new THREE.MeshStandardMaterial({color:0x737a7c,roughness:.88})
 };
 
 bindPBR(MAT.road,'asphalt_07',7,28,.38);
 bindPBR(MAT.curb,'concrete_pavement_02',4,18,.55);
 bindPBR(MAT.concrete,'concrete_pavement_03',5,5,.5);
-bindPBR(MAT.buildingA,'plastered_wall_02',5,4,.34);
-bindPBR(MAT.buildingB,'concrete',4,4,.42);
-bindPBR(MAT.buildingC,'brick_wall_001',5,5,.52);
-bindPBR(MAT.roof,'bitumen',4,4,.45);
-bindPBR(MAT.trunk,'bark_brown_01',2.2,4.2,.7);
+bindPBR(MAT.buildingA,'plastered_wall',5,4,.34);
+bindPBR(MAT.buildingB,'exterior_wall_cladding_02',4,4,.42);
+bindPBR(MAT.buildingC,'red_brick',5,5,.52);
+bindPBR(MAT.roof,'roof_tiles',4,4,.45);
+bindPBR(MAT.trunk,'pine_bark',2.2,4.2,.7);
+bindPBR(MAT.wood,'wooden_planks',3.5,3.5,.55);
+bindPBR(MAT.brick,'red_brick',5,4,.48);
+bindPBR(MAT.stone,'stone_pavers',4,4,.55);
+bindPBR(MAT.parkPath,'concrete_pavement_03',8,8,.45);
 
 const box = (sx,sy,sz,x,y,z,mat,parent=world) => {
   const m = new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),mat);
@@ -170,7 +179,7 @@ function groundHeightAt(x,z){
 }
 
 function isBlocked(x,z,r=.55) {
-  if (x < -146 || x > 146 || z < -146 || z > 146) return true;
+  if (x < -176 || x > 176 || z < -176 || z > 176) return true;
   for (const c of staticColliders) {
     if(c.passable && c.passable(x,z)) continue;
     if(c.shape==='circle'){
@@ -220,12 +229,23 @@ function addSidewalk(x,z,w,d){
 }
 
 function addBuilding(x,z,w,d,h,mat){
-  const g = new THREE.Group();
+  const g=new THREE.Group();
   g.position.set(x,0,z);
   world.add(g);
 
   box(w,h,d,0,h/2,0,mat,g);
-  box(w+.42,.5,d+.42,0,h+.25,0,MAT.roof,g);
+
+  // Mixed facade treatment: every building gets a plinth, corner strips and
+  // one secondary material so the district does not read as cloned boxes.
+  const accent=mat===MAT.buildingC ? MAT.buildingA :
+    (mat===MAT.buildingB ? MAT.wood : MAT.brick);
+
+  box(w+.36,.62,d+.36,0,.31,0,MAT.stone,g);
+  box(.28,h-.7,.18,-w/2+.16,h/2, d/2+.04,accent,g);
+  box(.28,h-.7,.18,w/2-.16,h/2, d/2+.04,accent,g);
+
+  // Roof fascia.
+  box(w+.5,.46,d+.5,0,h+.23,0,MAT.roof,g);
 
   const frontZ=d/2+.035;
   const backZ=-d/2-.035;
@@ -256,7 +276,6 @@ function addBuilding(x,z,w,d,h,mat){
   const addWindow=(px,py,pz,rotY)=>{
     const inset=box(1.96,1.5,.06,px,py,pz,darkInsetMat,g);
     inset.rotation.y=rotY;
-
     const glass=box(1.72,1.24,.045,px,py,pz-.035,MAT.glass,g);
     glass.rotation.y=rotY;
 
@@ -281,8 +300,9 @@ function addBuilding(x,z,w,d,h,mat){
     }
   }
 
+  // Main entrance with a projecting material break.
   box(Math.min(2.7,w*.22),3.15,.11,0,1.58,frontZ-.06,doorMat,g);
-  box(Math.min(3.3,w*.27),.18,.8,0,3.18,frontZ-.35,MAT.roof,g);
+  box(Math.min(3.3,w*.27),.18,.8,0,3.18,frontZ-.35,MAT.wood,g);
 
   const plaque=new THREE.Mesh(new THREE.BoxGeometry(.72,.42,.035),MAT.metal);
   plaque.position.set(Math.min(w*.32,4),2.15,frontZ-.09);
@@ -335,6 +355,129 @@ function addTree(x,z,s=1){
   });
 
   circleCollider(x,z,1.05*s,4.5);
+}
+
+function addParkPathRing(inner,outer,y=.21){
+  const mesh=new THREE.Mesh(
+    new THREE.RingGeometry(inner,outer,96),
+    MAT.parkPath
+  );
+  mesh.rotation.x=-Math.PI/2;
+  mesh.position.y=y;
+  mesh.receiveShadow=true;
+  world.add(mesh);
+  addWalkableSurface(0,0,outer*2,outer*2,y,null,(x,z)=>{
+    const r2=x*x+z*z;
+    return r2>=inner*inner && r2<=outer*outer;
+  });
+}
+
+function addParkPath(x,z,w,d,y=.21){
+  box(w,.12,d,x,y,z,MAT.parkPath);
+  addWalkableSurface(x,z,w,d,y);
+}
+
+function addLowWall(x,z,w,d,h=.95,rot=0,mat=MAT.stone){
+  const g=new THREE.Group();
+  g.position.set(x,h*.5,z);
+  g.rotation.y=rot;
+  world.add(g);
+  box(w,h,d,0,0,0,mat,g);
+  collider(x,z,w,d,.08,h);
+  return g;
+}
+
+function addPlanterCover(x,z,r=.95,h=1.0){
+  const planter=new THREE.Mesh(
+    new THREE.CylinderGeometry(r,r*1.08,h,16),
+    MAT.stone
+  );
+  planter.position.set(x,h*.5,z);
+  planter.castShadow=true;
+  planter.receiveShadow=true;
+  world.add(planter);
+  collider(x,z,r*2.05,r*2.05,.08,h);
+  return planter;
+}
+
+function addParkBench(x,z,rot=0){
+  const g=new THREE.Group();
+  g.position.set(x,.28,z);
+  g.rotation.y=rot;
+  world.add(g);
+
+  box(2.9,.22,.68,0,.2,0,MAT.wood,g);
+  box(2.45,.72,.16,0,.54,-.26,MAT.wood,g);
+  box(.14,.42,.5,-1.05,-.02,.12,MAT.stone,g);
+  box(.14,.42,.5,1.05,-.02,.12,MAT.stone,g);
+
+  const c=Math.cos(rot),s=Math.sin(rot);
+  addWalkableSurface(x,z,2.9,.68,.5,null,(px,pz)=>{
+    const lx=(px-x)*c+(pz-z)*s;
+    const lz=-(px-x)*s+(pz-z)*c;
+    return Math.abs(lx)<=1.45 && Math.abs(lz)<=.34;
+  });
+}
+
+function addHedgeCluster(x,z,sx=2.6,sz=1.4){
+  const g=new THREE.Group();
+  g.position.set(x,0,z);
+  world.add(g);
+  for(const [ox,oz,scale] of [
+    [-.8,0,.92],[0,.08,1.12],[.85,-.02,.9]
+  ]){
+    const bush=new THREE.Mesh(new THREE.DodecahedronGeometry(1.2,1),MAT.hedge);
+    bush.position.set(ox*sx*.25,1.1,oz*sz*.35);
+    bush.scale.set(scale*sx*.5,scale*.9,scale*sz*.5);
+    bush.castShadow=true;
+    bush.receiveShadow=true;
+    g.add(bush);
+  }
+  // Dense foliage obscures sight but is not a hard projectile wall.
+  return g;
+}
+
+function addParkPavilion(x,z,rot=0){
+  const g=new THREE.Group();
+  g.position.set(x,0,z);
+  g.rotation.y=rot;
+  world.add(g);
+
+  const wood=MAT.wood;
+  const stone=MAT.stone;
+  const postPositions=[[-2.7,-2.0],[2.7,-2.0],[-2.7,2.0],[2.7,2.0]];
+  postPositions.forEach(([px,pz])=>box(.26,2.8,.26,px,1.4,pz,wood,g));
+  box(6.1,.24,4.7,0,3.02,0,MAT.roof,g);
+  box(5.4,.12,4.05,0,3.15,0,wood,g);
+
+  // Two partial back walls: strong enough for combat cover but open like a real park pavilion.
+  box(5.5,1.45,.18,0,.73,1.95,stone,g);
+  box(.18,1.2,3.5,-2.65,.6,0,stone,g);
+  collider(x,z,5.8,4.1,.1,2.8);
+}
+
+function addParkKiosk(x,z,rot=0){
+  const g=new THREE.Group();
+  g.position.set(x,0,z);
+  g.rotation.y=rot;
+  world.add(g);
+  box(4.2,2.7,3.2,0,1.35,0,MAT.wood,g);
+  box(4.5,.25,3.5,0,2.85,0,MAT.roof,g);
+  box(2.2,1.1,.12,0,1.55,1.64,MAT.glass,g);
+  box(1.2,2.0,.12,-1.45,1.0,1.64,MAT.door,g);
+  collider(x,z,4.3,3.3,.08,2.8);
+}
+
+function addParkBin(x,z){
+  const bin=new THREE.Mesh(new THREE.CylinderGeometry(.28,.34,.8,12),MAT.metal);
+  bin.position.set(x,.4,z);
+  bin.castShadow=true;
+  world.add(bin);
+  collider(x,z,.68,.68,.05,.8);
+}
+
+function addParkTreeLine(points,s=.88){
+  points.forEach(([x,z,scale])=>addTree(x,z,scale||s));
 }
 
 function addCentralFountain(){
@@ -1018,47 +1161,132 @@ function addUrbanDetails(){
 }
 
 function buildMap(){
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(300,300),MAT.grass);
+  const ground=new THREE.Mesh(new THREE.PlaneGeometry(360,360),MAT.grass);
   ground.rotation.x=-Math.PI/2;
   ground.receiveShadow=true;
   world.add(ground);
-  // Keep soil below grass to prevent z-fighting.
-  box(220,.08,220,0,-.05,0,MAT.soil);
 
-  // Fresh road layout. Nothing from the previous map is reused.
-  addRoad(0,0,22,220);
-  addRoad(0,0,220,22);
-  addSidewalk(-15,0,5,220);
-  addSidewalk(15,0,5,220);
-  addSidewalk(0,-15,220,5);
-  addSidewalk(0,15,220,5);
+  box(300,.08,300,0,-.05,0,MAT.soil);
 
-  // Four clean neighborhood blocks.
-  addBuilding(-46,-45,20,15,8,MAT.buildingA);
-  addBuilding(-46,-5,20,15,9,MAT.buildingB);
-  addBuilding(-46,45,20,15,10,MAT.buildingC);
-  addBuilding(46,-45,20,15,9,MAT.buildingB);
-  addBuilding(46,-5,20,15,8,MAT.buildingA);
-  addBuilding(46,45,20,15,10,MAT.buildingC);
-  addBuilding(-78,-48,17,20,11,MAT.buildingB);
-  addBuilding(78,48,17,20,11,MAT.buildingB);
+  // ------------------------------------------------------------
+  // CITY PARK DISTRICT
+  // 360m x 360m tactical sandbox.
+  // Central park: ~150m square.
+  // Ring road: 16m wide around the park.
+  // Outer district: mixed-use buildings and secondary streets.
+  // ------------------------------------------------------------
+  addRoad(0,-84,190,16);
+  addRoad(0,84,190,16);
+  addRoad(-84,0,16,190);
+  addRoad(84,0,16,190);
 
-  // Small open central plaza; deliberately no fountain or repeating floating bars.
-  box(34,.10,34,0,.19,0,MAT.concrete);
-  addWalkableSurface(0,0,34,34,.24);
-  box(27,.008,27,0,.244,0,MAT.white);
-  addWalkableSurface(0,0,27,27,.248);
+  // Outer city streets create a second rotation layer without cutting through
+  // the park itself.
+  addRoad(-138,0,14,300);
+  addRoad(138,0,14,300);
+  addRoad(0,-138,300,14);
+  addRoad(0,138,300,14);
 
+  // Sidewalks follow both park and outer road rings.
+  addSidewalk(0,-74,164,4.5);
+  addSidewalk(0,74,164,4.5);
+  addSidewalk(-74,0,4.5,164);
+  addSidewalk(74,0,4.5,164);
+  addSidewalk(0,-128,300,4);
+  addSidewalk(0,128,300,4);
+  addSidewalk(-128,0,4,300);
+  addSidewalk(128,0,4,300);
+
+  // Four short pedestrian entries into the park.
+  addParkPath(0,-60,9,28,.19);
+  addParkPath(0,60,9,28,.19);
+  addParkPath(-60,0,28,9,.19);
+  addParkPath(60,0,28,9,.19);
+
+  // Core circulation: an inner ring and an outer ring.
+  addParkPathRing(20,27,.2);
+  addParkPathRing(52,61,.2);
+
+  // Central cross lanes connect the rings through the fountain zone.
+  addParkPath(-10,0,20,80,.2);
+  addParkPath(10,0,20,80,.2);
+  addParkPath(0,-10,80,20,.2);
+  addParkPath(0,10,80,20,.2);
+
+  // Buildings around the park perimeter: deliberately varied footprint,
+  // facade material and height to create multiple believable sightline blocks.
+  const buildings=[
+    [-108,-107,28,18,9,MAT.buildingA],[-62,-108,32,20,12,MAT.buildingC],
+    [-14,-108,28,18,8,MAT.buildingB],[38,-108,34,20,11,MAT.buildingA],
+    [92,-106,26,19,10,MAT.buildingC],
+    [-108,106,30,20,11,MAT.buildingB],[-58,108,30,18,9,MAT.buildingA],
+    [-10,108,26,20,12,MAT.buildingC],[38,108,34,18,10,MAT.buildingB],
+    [94,106,28,20,9,MAT.buildingA],
+    [-107,-60,20,28,10,MAT.buildingC],[-108,4,18,30,8,MAT.buildingA],
+    [-108,62,22,26,12,MAT.buildingB],
+    [108,-62,22,26,12,MAT.buildingA],[108,3,18,30,9,MAT.buildingC],
+    [108,64,24,27,11,MAT.buildingB],
+    [-150,-74,18,24,9,MAT.buildingB],[150,74,18,24,9,MAT.buildingC]
+  ];
+  buildings.forEach(([x,z,w,d,h,mat])=>addBuilding(x,z,w,d,h,mat));
+
+  // Park edge vegetation creates soft sightline breaks while preserving lanes.
   for(const p of [
-    [-31,-27],[-31,27],[31,-27],[31,27],
-    [-83,-18],[-83,18],[83,-18],[83,18],
-    [-22,-82],[22,-82],[-22,82],[22,82]
-  ]) addTree(p[0],p[1],.9);
+    [-62,-48],[-42,-48],[-22,-48],[22,-48],[42,-48],[62,-48],
+    [-62,48],[-42,48],[-22,48],[22,48],[42,48],[62,48],
+    [-48,-62],[-24,-62],[24,-62],[48,-62],
+    [-48,62],[-24,62],[24,62],[48,62]
+  ]) addHedgeCluster(p[0],p[1],2.2,1.25);
 
-  // Central landmark: a solid sci-fi fountain with a shallow basin and four animated water jets.
+  // Four pavilions become secondary combat anchors and real park amenities.
+  addParkPavilion(-44,-44,0);
+  addParkPavilion(44,-44,Math.PI/2);
+  addParkPavilion(-44,44,-Math.PI/2);
+  addParkPavilion(44,44,Math.PI);
+
+  // Two believable service kiosks near the park perimeter.
+  addParkKiosk(-58,0,Math.PI/2);
+  addParkKiosk(58,0,-Math.PI/2);
+
+  // Layered hard cover: low planters are partial cover; longer stone walls
+  // form stronger sightline breaks; neither blocks the entire map.
+  for(const [x,z] of [
+    [-30,-30],[30,-30],[-30,30],[30,30],
+    [-56,-18],[56,18],[-56,18],[56,-18]
+  ]) addPlanterCover(x,z,.95,1.0);
+
+  addLowWall(-18,-41,18,.8,1.15,0,MAT.stone);
+  addLowWall(18,41,18,.8,1.15,0,MAT.stone);
+  addLowWall(-41,18,.8,18,1.15,0,MAT.stone);
+  addLowWall(41,-18,.8,18,1.15,0,MAT.stone);
+
+  // Benches align with circulation rather than appearing as arbitrary cover.
+  for(const [x,z,r] of [
+    [-18,-25,0],[18,-25,Math.PI],[25,-18,Math.PI/2],[-25,18,-Math.PI/2],
+    [18,25,Math.PI],[ -18,25,0],[25,18,Math.PI/2],[-25,-18,-Math.PI/2]
+  ]) addParkBench(x,z,r);
+
+  // Small bins and plausible park furniture.
+  for(const [x,z] of [[-13,-44],[13,-44],[-44,-13],[44,13],[-13,44],[13,44],[44,-13],[-44,13]]){
+    addParkBin(x,z);
+  }
+
+  // Stronger tree composition: clusters at the park edges and a few open-lane trees.
+  addParkTreeLine([
+    [-68,-68,1.0],[-48,-70,.92],[-24,-69,.88],[24,-69,.9],[48,-70,.95],[68,-68,1.0],
+    [-68,68,.96],[-46,70,.92],[-22,69,.9],[24,69,.92],[48,70,.98],[68,68,1.0],
+    [-70,-24,.96],[-70,24,1.0],[70,-24,.92],[70,24,.98]
+  ]);
+
+  // A few isolated canopy anchors inside the park. Their spacing deliberately
+  // leaves readable combat lanes between them.
+  addTree(-30,-4,.86);
+  addTree(30,4,.9);
+  addTree(-4,30,.88);
+  addTree(4,-30,.86);
+
+  // Central landmark stays exactly where the whole layout can orient around it.
   addCentralFountain();
-
-  // Environmental details keep the district visually rich without cluttering traversal lanes.
   addPlazaFurniture();
   addUrbanDetails();
 }
@@ -1084,10 +1312,16 @@ async function loadExternalProp(path,targetScale=1){
 async function addStreetAssets(){
   const template=await loadExternalProp('Environment/glTF/StreetLight.gltf',1);
   if(!template) return;
-  for(const p of [
-    [-17,-72],[-17,72],[17,-72],[17,72],
-    [-72,-17],[72,-17],[-72,17],[72,17]
-  ]){
+
+  const points=[
+    [-74,-72],[-24,-72],[24,-72],[74,-72],
+    [-74,72],[-24,72],[24,72],[74,72],
+    [-72,-74],[-72,-24],[-72,24],[-72,74],
+    [72,-74],[72,-24],[72,24],[72,74],
+    [-132,-108],[-132,108],[132,-108],[132,108]
+  ];
+
+  for(const p of points){
     const g=template.clone(true);
     const box3=new THREE.Box3().setFromObject(g);
     const h=box3.max.y-box3.min.y;
@@ -1098,7 +1332,7 @@ async function addStreetAssets(){
 }
 
 const player = new THREE.Group();
-player.position.set(0,0,76);
+player.position.set(0,0,142);
 world.add(player);
 
 let characterRoot=null;

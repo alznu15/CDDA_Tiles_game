@@ -1864,6 +1864,7 @@ world.add(player);
 let characterRoot=null;
 let characterBaseScale=1;
 let mixer=null;
+let upperMixer=null;
 let actions={};
 let currentAction=null;
 let characterReady=false;
@@ -2362,7 +2363,7 @@ function buildUpperBodyWeaponAction(sourceAction,name){
   if(!clip.tracks.length) return null;
 
   clip.name='CDDA_UpperBody_'+name;
-  const action=mixer.clipAction(clip);
+  const action=upperMixer.clipAction(clip);
   action.enabled=false;
   action.setEffectiveWeight(0);
   action.setLoop(THREE.LoopRepeat,Infinity);
@@ -2488,6 +2489,7 @@ async function loadCharacter(){
     makeWeapon();
 
     mixer=new THREE.AnimationMixer(characterRoot);
+    upperMixer=new THREE.AnimationMixer(characterRoot);
     actions={};
     gunActions={};
 
@@ -3022,11 +3024,18 @@ function updatePlayer(dt,time){
 
   if(characterReady){
     setAction(moving?(sprint?'Run':'Walk'):'Idle',.15);
-    updateUpperBodyWeaponTemplate(dt,moving,sprint);
   }
 
   updateWeaponAnimation(dt);
   if(mixer) mixer.update(dt);
+
+  // Base locomotion writes the whole skeleton first. The independent upper
+  // mixer then writes only the armed upper-body tracks, so Walk/Run can never
+  // overwrite the weapon pose.
+  if(characterReady){
+    updateUpperBodyWeaponTemplate(dt,moving,sprint);
+    if(upperMixer) upperMixer.update(dt);
+  }
 
   const carousel=world.userData.carouselRide;
   if(carousel) carousel.rotation.y += dt*carousel.userData.rotationSpeed;

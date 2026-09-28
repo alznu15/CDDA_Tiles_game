@@ -1,0 +1,5 @@
+Character asset: SciFi LowPoly FPS Character by Ryan (rcorre).
+Original source: https://rcorre.itch.io/scifi-fps-character
+License: Creative Commons Attribution 4.0 International (CC BY 4.0).
+
+This project uses the character and original animation data with attribution.

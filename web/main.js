@@ -108,20 +108,24 @@ const box = (sx,sy,sz,x,y,z,mat,parent=world) => {
 };
 
 function collider(x,z,w,d,pad=.7,h=32,passable=null) {
-  staticColliders.push({x,z,w:w+pad,d:d+pad,h,passable});
+  staticColliders.push({shape:'box',x,z,w:w+pad,d:d+pad,h,passable});
 }
 
-function addWalkableSurface(x,z,w,d,height,heightAt=null){
-  walkableSurfaces.push({x,z,w,d,height,heightAt});
+function circleCollider(x,z,r,h=32,passable=null) {
+  staticColliders.push({shape:'circle',x,z,radius:r,h,passable});
+}
+
+function addWalkableSurface(x,z,w,d,height,heightAt=null,contains=null){
+  walkableSurfaces.push({x,z,w,d,height,heightAt,contains});
 }
 
 function groundHeightAt(x,z){
   let height=0;
   for(const s of walkableSurfaces){
-    if(
-      Math.abs(x-s.x)<=s.w*.5 &&
-      Math.abs(z-s.z)<=s.d*.5
-    ){
+    const inside=s.contains
+      ? s.contains(x,z)
+      : (Math.abs(x-s.x)<=s.w*.5 && Math.abs(z-s.z)<=s.d*.5);
+    if(inside){
       const sample=s.heightAt ? s.heightAt(x,z) : s.height;
       if(sample>height) height=sample;
     }
@@ -133,7 +137,13 @@ function isBlocked(x,z,r=.55) {
   if (x < -146 || x > 146 || z < -146 || z > 146) return true;
   for (const c of staticColliders) {
     if(c.passable && c.passable(x,z)) continue;
-    if (Math.abs(x-c.x) < c.w*.5+r && Math.abs(z-c.z) < c.d*.5+r) return true;
+    if(c.shape==='circle'){
+      const dx=x-c.x;
+      const dz=z-c.z;
+      if(dx*dx+dz*dz < (c.radius+r)*(c.radius+r)) return true;
+    }else if(Math.abs(x-c.x) < c.w*.5+r && Math.abs(z-c.z) < c.d*.5+r){
+      return true;
+    }
   }
   return false;
 }
@@ -198,7 +208,7 @@ function addTree(x,z,s=1){
 
 function addCentralFountain(){
   const g=new THREE.Group();
-  g.position.set(0,.25,0);
+  g.position.set(0,0,0);
   world.add(g);
 
   const basinMat=new THREE.MeshStandardMaterial({color:0x48545a,roughness:.42,metalness:.42});
@@ -217,13 +227,6 @@ function addCentralFountain(){
     emissiveIntensity:1.6,
     roughness:.18,
     metalness:.2
-  });
-  const rippleMat=()=>new THREE.MeshBasicMaterial({
-    color:0xbaf5ff,
-    transparent:true,
-    opacity:.45,
-    depthWrite:false,
-    side:THREE.DoubleSide
   });
 
   const base=new THREE.Mesh(new THREE.CylinderGeometry(5.35,5.75,.46,48),basinMat);
@@ -287,11 +290,61 @@ function addCentralFountain(){
     jetDroplets.push({mesh:drop,phase:idx*.7});
   }
 
+  // Fine droplets around the four jets.
+  const sprayCount=64;
+  const sprayPositions=new Float32Array(sprayCount*3);
+  const sprayVelocity=new Float32Array(sprayCount*3);
+  const sprayLife=new Float32Array(sprayCount);
+  const sprayIndex=new Float32Array(sprayCount);
+  for(let i=0;i<sprayCount;i++){
+    sprayLife[i]=Math.random();
+    sprayIndex[i]=i%4;
+  }
+  const sprayGeometry=new THREE.BufferGeometry();
+  sprayGeometry.setAttribute('position',new THREE.BufferAttribute(sprayPositions,3));
+  const sprayMaterial=new THREE.PointsMaterial({
+    color:0xb6f5ff,
+    size:.055,
+    transparent:true,
+    opacity:.72,
+    depthWrite:false,
+    sizeAttenuation:true
+  });
+  const sprayParticles=new THREE.Points(sprayGeometry,sprayMaterial);
+  g.add(sprayParticles);
+
+  // A second, softer particle field gives the center water sphere a living energy plume.
+  const coreCount=36;
+  const corePositions=new Float32Array(coreCount*3);
+  const coreVelocity=new Float32Array(coreCount*3);
+  const coreLife=new Float32Array(coreCount);
+  for(let i=0;i<coreCount;i++){
+    coreLife[i]=Math.random();
+  }
+  const coreGeometry=new THREE.BufferGeometry();
+  coreGeometry.setAttribute('position',new THREE.BufferAttribute(corePositions,3));
+  const coreMaterial=new THREE.PointsMaterial({
+    color:0x9ef3ff,
+    size:.065,
+    transparent:true,
+    opacity:.58,
+    depthWrite:false,
+    sizeAttenuation:true
+  });
+  const coreParticles=new THREE.Points(coreGeometry,coreMaterial);
+  g.add(coreParticles);
+
   const ripples=[];
   for(let i=0;i<4;i++){
     const ripple=new THREE.Mesh(
       new THREE.TorusGeometry(.85+i*.45,.035,6,32),
-      rippleMat()
+      new THREE.MeshBasicMaterial({
+        color:0xbaf5ff,
+        transparent:true,
+        opacity:.42,
+        depthWrite:false,
+        side:THREE.DoubleSide
+      })
     );
     ripple.rotation.x=Math.PI/2;
     ripple.position.y=.625;
@@ -299,31 +352,22 @@ function addCentralFountain(){
     ripples.push(ripple);
   }
 
-  // Low-angle ramp: walk onto the fountain instead of jumping onto it.
-  const rampWidth=2.7;
-  const rampStartZ=-7.0;
-  const rampEndZ=-4.05;
-  const rampStartY=.25;
-  const rampEndY=.67;
-  const rampLength=rampEndZ-rampStartZ;
-  const rampAngle=-Math.atan2(rampEndY-rampStartY,rampLength);
-  const ramp=box(
-    rampWidth,.18,rampLength,
-    0,(rampStartY+rampEndY)/2,(rampStartZ+rampEndZ)/2,
-    basinMat,g
-  );
-  ramp.rotation.x=rampAngle;
-
+  // The fountain is intentionally a walkable low step, not a visible ramp.
+  // The player's foot animation + terrain smoothing handles the small height change.
+  const ringInner=4.45;
+  const ringOuter=5.25;
   addWalkableSurface(
-    0,(rampStartZ+rampEndZ)/2,rampWidth,rampLength,rampStartY,
+    0,0,ringOuter*2.2,ringOuter*2.2,.84,
+    null,
     (x,z)=>{
-      const t=THREE.MathUtils.clamp((z-rampStartZ)/(rampEndZ-rampStartZ),0,1);
-      return THREE.MathUtils.lerp(rampStartY,rampEndY,t);
+      const r2=x*x+z*z;
+      return r2>=ringInner*ringInner && r2<=ringOuter*ringOuter;
     }
   );
 
-  // Approximate the circular fountain collision, with the south ramp as the opening.
-  collider(0,0,11.5,11.5,.25,2.8,(x,z)=>z<-4.0 && Math.abs(x)<1.45);
+  // Exact circular blocking: the player may stand on the outer ring,
+  // but cannot walk into the water/core area.
+  circleCollider(0,0,ringInner,.95);
 
   const light=new THREE.PointLight(0x76eaff,2.0,12,2);
   light.position.set(0,2.1,0);
@@ -334,6 +378,15 @@ function addCentralFountain(){
   g.userData.ripples=ripples;
   g.userData.coreRing=coreRing;
   g.userData.waterSurface=inner;
+  g.userData.sprayParticles=sprayParticles;
+  g.userData.sprayPositions=sprayPositions;
+  g.userData.sprayVelocity=sprayVelocity;
+  g.userData.sprayLife=sprayLife;
+  g.userData.sprayIndex=sprayIndex;
+  g.userData.coreParticles=coreParticles;
+  g.userData.corePositions=corePositions;
+  g.userData.coreVelocity=coreVelocity;
+  g.userData.coreLife=coreLife;
   world.userData.fountain=g;
 }
 
@@ -354,7 +407,17 @@ function addPlazaFurniture(){
     box(.16,.45,.55,1.2,-.1,.18,benchMat,g);
 
     const benchAlongX=Math.abs(Math.sin(rot))<0.5;
-    collider(x,z,benchAlongX?3.8:.95,benchAlongX?.95:3.8,.12,1.1);
+    const c=Math.cos(rot);
+    const sn=Math.sin(rot);
+    addWalkableSurface(
+      x,z,3.4,0.7,.50,
+      null,
+      (px,pz)=>{
+        const lx=(px-x)*c+(pz-z)*sn;
+        const lz=-(px-x)*sn+(pz-z)*c;
+        return Math.abs(lx)<=1.7 && Math.abs(lz)<=.35;
+      }
+    );
   }
 
   const planterMat=new THREE.MeshStandardMaterial({color:0x536067,roughness:.8});
@@ -992,6 +1055,7 @@ function updatePlayer(dt,time){
   const fountain=world.userData.fountain;
   if(fountain){
     const cycle=time*.003;
+
     fountain.userData.jets.forEach((jet,i)=>{
       const wave=.88+.16*Math.sin(cycle*2.2+i*.9);
       jet.scale.y=wave;
@@ -1004,6 +1068,62 @@ function updatePlayer(dt,time){
       item.mesh.scale.setScalar(.72+.28*Math.sin(Math.PI*t));
       item.mesh.material.opacity=.24+.48*(1-t);
     });
+
+    const sprayPos=fountain.userData.sprayPositions;
+    const sprayVel=fountain.userData.sprayVelocity;
+    const sprayLife=fountain.userData.sprayLife;
+    const sprayIndex=fountain.userData.sprayIndex;
+    const sprayAttr=fountain.userData.sprayParticles.geometry.attributes.position;
+    for(let i=0;i<sprayLife.length;i++){
+      const v=i*3;
+      sprayLife[i]+=dt*(.7+((i*17)%9)*.025);
+      if(sprayLife[i]>=1){
+        sprayLife[i]-=1;
+        const jet=sprayIndex[i]%4;
+        const px=jet===0?1.02:jet===2?-1.02:((Math.random()-.5)*.12);
+        const pz=jet===1?1.02:jet===3?-1.02:((Math.random()-.5)*.12);
+        sprayPos[v]=px+(Math.random()-.5)*.18;
+        sprayPos[v+1]=1.56+Math.random()*.25;
+        sprayPos[v+2]=pz+(Math.random()-.5)*.18;
+        const a=Math.atan2(pz,px)+Math.PI+(Math.random()-.5)*.9;
+        const speed=.55+Math.random()*.8;
+        sprayVel[v]=Math.cos(a)*speed;
+        sprayVel[v+1]=1.25+Math.random()*1.1;
+        sprayVel[v+2]=Math.sin(a)*speed;
+      }else{
+        sprayPos[v]+=sprayVel[v]*dt;
+        sprayPos[v+1]+=sprayVel[v+1]*dt;
+        sprayPos[v+2]+=sprayVel[v+2]*dt;
+        sprayVel[v+1]-=2.5*dt;
+      }
+    }
+    sprayAttr.needsUpdate=true;
+
+    const corePos=fountain.userData.corePositions;
+    const coreVel=fountain.userData.coreVelocity;
+    const coreLife=fountain.userData.coreLife;
+    const coreAttr=fountain.userData.coreParticles.geometry.attributes.position;
+    for(let i=0;i<coreLife.length;i++){
+      const v=i*3;
+      coreLife[i]+=dt*(.55+((i*13)%7)*.035);
+      if(coreLife[i]>=1){
+        coreLife[i]-=1;
+        const angle=Math.random()*Math.PI*2;
+        const radius=.12+Math.random()*.28;
+        corePos[v]=Math.cos(angle)*radius;
+        corePos[v+1]=1.95+Math.random()*.22;
+        corePos[v+2]=Math.sin(angle)*radius;
+        const spread=.25+Math.random()*.5;
+        coreVel[v]=Math.cos(angle)*spread;
+        coreVel[v+1]=.25+Math.random()*.55;
+        coreVel[v+2]=Math.sin(angle)*spread;
+      }else{
+        corePos[v]+=coreVel[v]*dt;
+        corePos[v+1]+=coreVel[v+1]*dt;
+        corePos[v+2]+=coreVel[v+2]*dt;
+      }
+    }
+    coreAttr.needsUpdate=true;
 
     fountain.userData.ripples.forEach((r,i)=>{
       const t=(cycle*.52+i*.25)%1;
@@ -1039,15 +1159,17 @@ function getCameraClearDistance(target,desired){
   let safeDistance=distance;
 
   for(const c of staticColliders){
+    const halfW=c.shape==='circle' ? c.radius : c.w*.5;
+    const halfD=c.shape==='circle' ? c.radius : c.d*.5;
     cameraBox.min.set(
-      c.x-c.w*.5-cameraCollisionRadius,
+      c.x-halfW-cameraCollisionRadius,
       -cameraCollisionRadius,
-      c.z-c.d*.5-cameraCollisionRadius
+      c.z-halfD-cameraCollisionRadius
     );
     cameraBox.max.set(
-      c.x+c.w*.5+cameraCollisionRadius,
+      c.x+halfW+cameraCollisionRadius,
       (Number.isFinite(c.h)?c.h:32)+cameraCollisionRadius,
-      c.z+c.d*.5+cameraCollisionRadius
+      c.z+halfD+cameraCollisionRadius
     );
 
     const hit=cameraRay.intersectBox(cameraBox,cameraHitPoint);

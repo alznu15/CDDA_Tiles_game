@@ -2158,12 +2158,12 @@ async function loadCharacter(){
       if(normalized==='run'&&!actions.Run) actions.Run=action;
       if((normalized==='jump'||normalized==='jump_start'||normalized==='jump_loop')&&!actions.Jump) actions.Jump=action;
 
-      if(normalized.includes('gun')||normalized.includes('shoot')){
-        if(normalized.includes('idle')&&!gunActions.Idle) gunActions.Idle=action;
-        if(normalized.includes('walk')&&!gunActions.Walk) gunActions.Walk=action;
-        if(normalized.includes('run')&&!gunActions.Run) gunActions.Run=action;
-        if((normalized.includes('jump')||normalized.includes('fall')||normalized.includes('air'))&&!gunActions.Jump) gunActions.Jump=action;
-      }
+      // Exact armed-locomotion names win. Shooting variants are never
+      // allowed to become the idle/walk/run loop accidentally.
+      if(normalized==='idle_gun') gunActions.Idle=gunActions.Idle||action;
+      if(normalized==='walk_gun') gunActions.Walk=gunActions.Walk||action;
+      if(normalized==='run_gun') gunActions.Run=gunActions.Run||action;
+      if(normalized==='jump_gun') gunActions.Jump=gunActions.Jump||action;
     }
 
     const findClip=(patterns)=>{

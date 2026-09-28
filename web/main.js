@@ -127,7 +127,8 @@ const MAT = {
   brick:new THREE.MeshStandardMaterial({color:0x713f34,roughness:.88}),
   stone:new THREE.MeshStandardMaterial({color:0x687174,roughness:.82}),
   hedge:new THREE.MeshStandardMaterial({color:0x31553a,roughness:.94}),
-  parkPath:new THREE.MeshStandardMaterial({color:0x737a7c,roughness:.88})
+  parkPath:new THREE.MeshStandardMaterial({color:0x737a7c,roughness:.88}),
+  door:new THREE.MeshStandardMaterial({color:0x30383d,roughness:.46,metalness:.42})
 };
 
 bindPBR(MAT.road,'asphalt_07',7,28,.38);
@@ -1076,6 +1077,8 @@ function addCentralFountain(){
 }
 
 function addPlazaFurniture(){
+  return; // superseded by the park-specific furniture pass
+  /*
   const benchMat=new THREE.MeshStandardMaterial({color:0x3b464b,roughness:.72,metalness:.25});
   const seatMat=new THREE.MeshStandardMaterial({color:0x7c8d93,roughness:.62,metalness:.18});
 
@@ -1122,6 +1125,7 @@ function addPlazaFurniture(){
     world.add(plant);
     collider(x,z,1.75,1.75,.12,1.6);
   }
+  */
 }
 
 function addUrbanDetails(){
@@ -1203,6 +1207,14 @@ function buildMap(){
   addParkPath(-60,0,28,9,.19);
   addParkPath(60,0,28,9,.19);
 
+  // Four broad pedestrian crossings connect the park gates to the ring road.
+  for(const [cx,cz,horizontal] of [[0,-84,true],[0,84,true],[-84,0,false],[84,0,false]]){
+    for(let i=-4;i<=4;i++){
+      if(horizontal) box(1.6,.014,.55,cx+i*2,cz,7.0<8?MAT.white:MAT.white);
+      else box(.55,.014,1.6,cx,cz+i*2,MAT.white);
+    }
+  }
+
   // Core circulation: an inner ring and an outer ring.
   addParkPathRing(20,27,.2);
   addParkPathRing(52,61,.2);
@@ -1226,7 +1238,7 @@ function buildMap(){
     [-108,62,22,26,12,MAT.buildingB],
     [108,-62,22,26,12,MAT.buildingA],[108,3,18,30,9,MAT.buildingC],
     [108,64,24,27,11,MAT.buildingB],
-    [-150,-74,18,24,9,MAT.buildingB],[150,74,18,24,9,MAT.buildingC]
+    [-155,-74,18,24,9,MAT.buildingB],[155,74,18,24,9,MAT.buildingC]
   ];
   buildings.forEach(([x,z,w,d,h,mat])=>addBuilding(x,z,w,d,h,mat));
 
@@ -1287,8 +1299,7 @@ function buildMap(){
 
   // Central landmark stays exactly where the whole layout can orient around it.
   addCentralFountain();
-  addPlazaFurniture();
-  addUrbanDetails();
+
 }
 buildMap();
 

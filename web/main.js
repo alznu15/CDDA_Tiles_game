@@ -3161,45 +3161,55 @@ function __CDDA_solveArm(side,targetWorld,hintWorld,weight){
   const wrist=side==='right'?window.__CDDAWeaponBones.rightWrist:window.__CDDAWeaponBones.leftWrist;
   if(!upper||!elbow||!wrist||weight<=0) return;
 
-  const s=upper.getWorldPosition(new THREE.Vector3());
-  const e=elbow.getWorldPosition(new THREE.Vector3());
-  const w=wrist.getWorldPosition(new THREE.Vector3());
-  const l1=s.distanceTo(e);
-  const l2=e.distanceTo(w);
-  if(l1<.05||l2<.05) return;
+  // The rig has an extra forearm segment (lowerarm02) between lowerarm01 and
+  // the wrist. Solve against the actual wrist end-effector, and iterate twice
+  // so the residual does not leave the hand visibly walking away from the gun.
+  const solveOnce=()=>{
+    const s=upper.getWorldPosition(new THREE.Vector3());
+    const e=elbow.getWorldPosition(new THREE.Vector3());
+    const w=wrist.getWorldPosition(new THREE.Vector3());
+    const l1=s.distanceTo(e);
+    const l2=e.distanceTo(w);
+    if(l1<.05||l2<.05) return false;
 
-  const desiredW=w.clone().lerp(targetWorld,THREE.MathUtils.clamp(weight,0,1));
-  const axis=desiredW.clone().sub(s);
-  let d=axis.length();
-  if(d<.001) return;
-  const maxD=Math.max(.06,l1+l2-.018);
-  const minD=Math.abs(l1-l2)+.018;
-  d=THREE.MathUtils.clamp(d,minD,maxD);
-  axis.multiplyScalar(1/axis.length());
+    const desiredW=w.clone().lerp(targetWorld,THREE.MathUtils.clamp(weight,0,1));
+    const axis=desiredW.clone().sub(s);
+    let d=axis.length();
+    if(d<.001) return false;
 
-  const hint=hintWorld.clone().sub(s);
-  hint.addScaledVector(axis,-hint.dot(axis));
-  if(hint.lengthSq()<1e-6){
-    hint.set(side==='right'?1:-1,0,0);
+    const maxD=Math.max(.06,l1+l2-.012);
+    const minD=Math.abs(l1-l2)+.012;
+    d=THREE.MathUtils.clamp(d,minD,maxD);
+    axis.multiplyScalar(1/axis.length());
+
+    const hint=hintWorld.clone().sub(s);
     hint.addScaledVector(axis,-hint.dot(axis));
-  }
-  hint.normalize();
+    if(hint.lengthSq()<1e-6){
+      hint.set(side==='right'?1:-1,0,0);
+      hint.addScaledVector(axis,-hint.dot(axis));
+    }
+    hint.normalize();
 
-  const along=(l1*l1+d*d-l2*l2)/(2*d);
-  const lateral=Math.sqrt(Math.max(0,l1*l1-along*along));
-  const elbowTarget=s.clone()
-    .addScaledVector(axis,along)
-    .addScaledVector(hint,lateral);
+    const along=(l1*l1+d*d-l2*l2)/(2*d);
+    const lateral=Math.sqrt(Math.max(0,l1*l1-along*along));
+    const elbowTarget=s.clone()
+      .addScaledVector(axis,along)
+      .addScaledVector(hint,lateral);
 
-  __CDDA_alignBoneChain(upper,elbow,elbowTarget.clone().sub(s));
-  characterRoot.updateMatrixWorld(true);
+    __CDDA_alignBoneChain(upper,elbow,elbowTarget.clone().sub(s));
+    characterRoot.updateMatrixWorld(true);
 
-  const elbowNow=elbow.getWorldPosition(new THREE.Vector3());
-  const wristNow=wrist.getWorldPosition(new THREE.Vector3());
-  const lowerDir=desiredW.clone().sub(elbowNow);
-  if(lowerDir.lengthSq()>1e-6){
-    __CDDA_alignBoneChain(elbow,wrist,lowerDir);
-  }
+    const elbowNow=elbow.getWorldPosition(new THREE.Vector3());
+    const lowerDir=desiredW.clone().sub(elbowNow);
+    if(lowerDir.lengthSq()>1e-6){
+      __CDDA_alignBoneChain(elbow,wrist,lowerDir);
+      characterRoot.updateMatrixWorld(true);
+    }
+    return true;
+  };
+
+  solveOnce();
+  solveOnce();
 }
 
 function __CDDA_weaponPoseFromGrips(rightGripWorld,leftGripWorld,outPosition,outQuaternion){
@@ -3442,6 +3452,27 @@ function __CDDA_applyWeaponPose(dt){
     characterRoot.updateMatrixWorld(true);
     __CDDA_solveArm('left',blendedL,hintL,armBlend);
     characterRoot.updateMatrixWorld(true);
+
+    // Final attachment pass: use the wrists that were actually solved above
+    // as the authoritative gun mounting points. This removes visible IK
+    // residuals, so the rifle follows both hands instead of floating beside them.
+    const solvedR=window.__CDDAWeaponBones.rightWrist.getWorldPosition(new THREE.Vector3());
+    const solvedL=window.__CDDAWeaponBones.leftWrist.getWorldPosition(new THREE.Vector3());
+    const attachedPosition=new THREE.Vector3();
+    const attachedQuaternion=new THREE.Quaternion();
+    __CDDA_weaponPoseFromGrips(
+      solvedR,
+      solvedL,
+      attachedPosition,
+      attachedQuaternion
+    );
+    const attachedLocalPosition=attachedPosition.clone();
+    player.worldToLocal(attachedLocalPosition);
+    const attachedLocalQuaternion=player.getWorldQuaternion(new THREE.Quaternion()).invert()
+      .multiply(attachedQuaternion);
+    weaponRoot.position.copy(attachedLocalPosition);
+    weaponRoot.quaternion.copy(attachedLocalQuaternion);
+    weaponRoot.updateMatrixWorld(true);
 
     if(__CDDA_aimPoseWeight>.35){
       __CDDA_applyHeadAim(__CDDA_aimPoseWeight);

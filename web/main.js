@@ -155,11 +155,11 @@ const box = (sx,sy,sz,x,y,z,mat,parent=world) => {
   return m;
 };
 
-function collider(x,z,w,d,pad=.7,h=32,passable=null) {
-  staticColliders.push({shape:'box',x,z,w:w+pad,d:d+pad,h,passable});
+function collider(x,z,w,d,pad=.7,h=32,passable=null,walkableTop=false) {
+  staticColliders.push({shape:'box',x,z,w:w+pad,d:d+pad,h,passable,walkableTop});
 }
 
-function orientedCollider(x,z,w,d,h,rot=0,pad=.08,passable=null){
+function orientedCollider(x,z,w,d,h,rot=0,pad=.08,passable=null,walkableTop=false){
   const quarter=Math.abs(Math.sin(rot))>.5;
   staticColliders.push({
     shape:'box',
@@ -167,7 +167,8 @@ function orientedCollider(x,z,w,d,h,rot=0,pad=.08,passable=null){
     w:(quarter?d:w)+pad,
     d:(quarter?w:d)+pad,
     h,
-    passable
+    passable,
+    walkableTop
   });
 }
 
@@ -212,6 +213,20 @@ function isBlocked(x,z,r=.55,feetY=0,airborne=false) {
   return false;
 }
 
+function topSurfaceAt(x,z){
+  let top=0;
+  for(const c of staticColliders){
+    if(!c.walkableTop) continue;
+    if(c.shape==='circle'){
+      const dx=x-c.x,dz=z-c.z;
+      if(dx*dx+dz*dz <= c.radius*c.radius) top=Math.max(top,c.h);
+    }else if(Math.abs(x-c.x)<=c.w*.5+playerRadius && Math.abs(z-c.z)<=c.d*.5+playerRadius){
+      top=Math.max(top,c.h);
+    }
+  }
+  return top;
+}
+
 function canTraverseTo(x,z,fromGround,feetY=0,airborne=false){
   if(isBlocked(x,z,playerRadius,feetY,airborne)) return false;
   return Math.abs(groundHeightAt(x,z)-fromGround)<=terrainStepHeight;
@@ -239,9 +254,13 @@ function addSidewalk(x,z,w,d){
 
   const horizontal=w>d;
   const edge=horizontal
-    ? new THREE.Mesh(new THREE.BoxGeometry(w,.12,.08),MAT.metal)
-    : new THREE.Mesh(new THREE.BoxGeometry(.08,.12,d),MAT.metal);
-  edge.position.set(x,.25,z);
+    ? new THREE.Mesh(new THREE.BoxGeometry(w,.12,.08),MAT.stone)
+    : new THREE.Mesh(new THREE.BoxGeometry(.08,.12,d),MAT.stone);
+  edge.position.set(
+    horizontal ? x : x + Math.sign(x||1)*w*.5,
+    .25,
+    horizontal ? z + Math.sign(z||1)*d*.5 : z
+  );
   edge.castShadow=true;
   edge.receiveShadow=true;
   world.add(edge);
@@ -286,6 +305,50 @@ function facadeWearMaterial(baseMat,seed){
   return mat;
 }
 
+function addBuildingWeather(g,w,d,h,frontZ,seed){
+  const rand=()=>{
+    const v=Math.sin(seed*12.9898)*43758.5453;
+    seed=v-Math.floor(v);
+    return seed;
+  };
+  const makeWearCanvas=()=>{
+    const c=document.createElement('canvas');
+    c.width=256;c.height=256;
+    const ctx=c.getContext('2d');
+    ctx.clearRect(0,0,256,256);
+    for(let i=0;i<18;i++){
+      const x=rand()*256,y=rand()*256;
+      const len=10+rand()*75;
+      const width=.5+rand()*2.8;
+      ctx.strokeStyle='rgba(44,38,32,'+(0.12+rand()*.16).toFixed(3)+')';
+      ctx.lineWidth=width;
+      ctx.beginPath();ctx.moveTo(x,y);
+      ctx.lineTo(x+len*(.4+rand()*.6),y-8+rand()*34);
+      ctx.stroke();
+    }
+    for(let i=0;i<11;i++){
+      const x=rand()*256,y=rand()*256,r=3+rand()*12;
+      ctx.fillStyle='rgba(103,87,67,'+(0.06+rand()*.12).toFixed(3)+')';
+      ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+    }
+    return new THREE.CanvasTexture(c);
+  };
+  const front=new THREE.Mesh(
+    new THREE.PlaneGeometry(Math.max(2,w-1),Math.max(2,h-1.1)),
+    new THREE.MeshStandardMaterial({map:makeWearCanvas(),transparent:true,opacity:.5,roughness:.96,depthWrite:false})
+  );
+  front.position.set(0,h*.52,frontZ+.012);
+  g.add(front);
+
+  const side=new THREE.Mesh(
+    new THREE.PlaneGeometry(Math.max(2,d-1),Math.max(2,h-1.1)),
+    new THREE.MeshStandardMaterial({map:makeWearCanvas(),transparent:true,opacity:.38,roughness:.98,depthWrite:false})
+  );
+  side.rotation.y=Math.PI/2;
+  side.position.set(w*.5+.012,h*.52,0);
+  g.add(side);
+}
+
 function addBuilding(x,z,w,d,h,mat){
   const g=new THREE.Group();
   g.position.set(x,0,z);
@@ -294,14 +357,10 @@ function addBuilding(x,z,w,d,h,mat){
   const facadeMat=facadeWearMaterial(mat,x*0.73+z*1.17+w*2.1+d*.37);
   box(w,h,d,0,h/2,0,facadeMat,g);
 
-  // Mixed facade treatment: every building gets a plinth, corner strips and
-  // one secondary material so the district does not read as cloned boxes.
+  // Mixed-material base without artificial T-shaped strips.
   const accent=mat===MAT.buildingC ? MAT.buildingA :
     (mat===MAT.buildingB ? MAT.wood : MAT.brick);
-
   box(w+.36,.62,d+.36,0,.31,0,MAT.stone,g);
-  box(.28,h-.7,.18,-w/2+.16,h/2, d/2+.04,accent,g);
-  box(.28,h-.7,.18,w/2-.16,h/2, d/2+.04,accent,g);
 
   const frontZ=d/2+.035;
   const backZ=-d/2-.035;
@@ -457,7 +516,7 @@ function addLowWall(x,z,w,d,h=.95,rot=0,mat=MAT.stone){
   g.rotation.y=rot;
   world.add(g);
   box(w,h,d,0,0,0,mat,g);
-  collider(x,z,w,d,.08,h);
+  collider(x,z,w,d,.08,h,null,true);
   return g;
 }
 
@@ -470,7 +529,7 @@ function addPlanterCover(x,z,r=.95,h=1.0){
   planter.castShadow=true;
   planter.receiveShadow=true;
   world.add(planter);
-  collider(x,z,r*2.05,r*2.05,.08,h);
+  collider(x,z,r*2.05,r*2.05,.08,h,null,true);
   return planter;
 }
 
@@ -491,6 +550,11 @@ function addParkBench(x,z,rot=0){
   box(.16,.55,.64,1.55,-.02,.16,MAT.stone,g);
 
   const c=Math.cos(rot),s=Math.sin(rot);
+  const toWorld=(lx,lz)=>[x+lx*c-lz*s,z+lx*s+lz*c];
+  const [seatX,seatZ]=toWorld(0,0);
+  orientedCollider(seatX,seatZ,4.5,.92,.82,rot,.05,null,true);
+  const [backX,backZ]=toWorld(0,-.35);
+  orientedCollider(backX,backZ,3.75,.18,.92,rot,.05);
   addWalkableSurface(x,z,4.5,.92,.54,null,(px,pz)=>{
     const lx=(px-x)*c+(pz-z)*s;
     const lz=-(px-x)*s+(pz-z)*c;
@@ -548,7 +612,7 @@ function addParkPavilion(x,z,rot=0){
   const [bx,bz]=toWorld(0,1.98);
   orientedCollider(bx,bz,5.55,.20,1.55,rot,.05);
   const [sx,sz]=toWorld(-2.68,0);
-  orientedCollider(sx,sz,.20,3.55,1.25,rot,.05);
+  orientedCollider(sx,sz,.20,3.55,1.25,rot,.05,null,true);
 }
 function addParkKiosk(x,z,rot=0){
   const g=new THREE.Group();
@@ -572,7 +636,8 @@ function addParkKiosk(x,z,rot=0){
   box(.24,.18,3.15,2.18,2.73,0,MAT.wood,g);
 
   // Front service counter with a clear standing gap.
-  box(3.55,.68,.42,0,1.0,1.38, MAT.stone,g);
+  box(3.55,.68,.42,0,1.08,1.38,MAT.stone,g);
+  box(3.6,.16,.14,0,2.35,1.38,MAT.wood,g);
   box(.22,2.65,.22,-1.85,1.325,1.35,MAT.wood,g);
   box(.22,2.65,.22,1.85,1.325,1.35,MAT.wood,g);
 
@@ -624,7 +689,7 @@ function addPlayground(x,z,rot=0){
     const m=box(w,h,th,px,h/2,pz,MAT.wood,g);
     const c=Math.cos(rot),s=Math.sin(rot);
     const wx=x+px*c-pz*s,wz=z+px*s+pz*c;
-    orientedCollider(wx,wz,w,th,h,rot,.05);
+    orientedCollider(wx,wz,w,th,h,rot,.05,null,true);
   });
 
   // Sandbox with a thick wooden rim.
@@ -1421,10 +1486,10 @@ function buildMap(){
   addSidewalk(128,0,4,300);
 
   // Four short pedestrian entries into the park.
-  addParkPath(0,-60,9,28,.19);
-  addParkPath(0,60,9,28,.19);
-  addParkPath(-60,0,28,9,.19);
-  addParkPath(60,0,28,9,.19);
+  addParkPath(0,-58.5,9,24,.19);
+  addParkPath(0,58.5,9,24,.19);
+  addParkPath(-58.5,0,24,9,.19);
+  addParkPath(58.5,0,24,9,.19);
 
   // Four broad pedestrian crossings connect the park gates to the ring road.
   // Keep the raised lamp/furniture strip outside this crossing footprint.
@@ -1547,10 +1612,9 @@ async function addStreetAssets(){
   if(!template) return;
 
   const points=[
-    [-79,-72],[-24,-72],[24,-72],[79,-72],
-    [-79,72],[-24,72],[24,72],[79,72],
-    [-72,-79],[-72,-24],[-72,24],[-72,79],
-    [72,-79],[72,-24],[72,24],[72,79],
+    [-76,-72],[-24,-76],[24,-76],[76,-72],
+    [-76,72],[-24,76],[24,76],[76,72],
+    [-76,-24],[-76,24],[76,-24],[76,24],
     [-132,-108],[-132,108],[132,-108],[132,108]
   ];
 
@@ -1672,9 +1736,9 @@ let cameraHeight=1.9;
 let shoulderSide=1;
 const cameraShoulder=1.22;
 const cameraAimOffset=.95;
-const cameraCollisionRadius=.24;
-const cameraCollisionSkin=.16;
-const cameraMinClearance=1.45;
+const cameraCollisionRadius=.36;
+const cameraCollisionSkin=.24;
+const cameraMinClearance=1.18;
 const cameraRay=new THREE.Ray();
 const cameraBox=new THREE.Box3();
 const cameraHitPoint=new THREE.Vector3();
@@ -2042,8 +2106,10 @@ function updatePlayer(dt,time){
     }else{
       verticalVelocity+=gravity*dt;
       const nextY=player.position.y+verticalVelocity*dt;
-      if(nextY<=surfaceY){
-        player.position.y=surfaceY;
+      const coverTop=topSurfaceAt(player.position.x,player.position.z);
+      const landingY=Math.max(surfaceY,coverTop);
+      if(nextY<=landingY){
+        player.position.y=landingY;
         verticalVelocity=0;
         grounded=true;
       }else{
@@ -2147,7 +2213,7 @@ function updateCamera(dt){
     desired.y=floorY;
   }
 
-  camera.position.lerp(desired,1-Math.pow(.001,dt));
+  camera.position.lerp(desired,1-Math.pow(.0002,dt));
 
   const lookTarget=target.clone().addScaledVector(shoulderRight,cameraAimOffset*shoulderSide);
   camera.lookAt(lookTarget);

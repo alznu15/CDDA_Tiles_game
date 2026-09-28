@@ -1877,6 +1877,7 @@ let lastShotTime=0;
 let fireAccumulator=0;
 
 const characterAnimations=new Map();
+const lowerBodyAnimations=new Map();
 const upperBodyAnimations=new Map();
 const locomotionNames={
   idle:'Idle',
@@ -1934,6 +1935,22 @@ function filterUpperBodyClip(clip,name){
   const tracks=clip.tracks.filter(clipIsUpperBodyTrack);
   return new THREE.AnimationClip(name,clip.duration,tracks);
 }
+function clipIsLowerBodyTrack(track){
+  return !clipIsUpperBodyTrack(track);
+}
+
+function filterLowerBodyClip(clip,name){
+  const tracks=clip.tracks.filter(clipIsLowerBodyTrack);
+  return new THREE.AnimationClip(name,clip.duration,tracks);
+}
+
+function filterVaultRootMotion(clip){
+  const tracks=clip.tracks.filter(track=>{
+    const boneName=(track.name||'').split('.')[0];
+    return normalizeBoneName(boneName)!=='root';
+  });
+  return new THREE.AnimationClip(clip.name+'_NoRoot',clip.duration,tracks);
+}
 
 function buildGodotClip(data){
   const tracks=[];
@@ -1975,11 +1992,11 @@ function buildAnimationLibrary(gltf,extraData){
   mixer=new THREE.AnimationMixer(characterRoot);
   actions={};
   characterAnimations.clear();
+  lowerBodyAnimations.clear();
   upperBodyAnimations.clear();
 
   for(const clip of gltf.animations||[]){
     const action=mixer.clipAction(clip);
-    const key=clip.name.toLowerCase();
     rememberClip(clip.name,action);
 
     if(clip.name==='Idle') actions.Idle=action;
@@ -1988,28 +2005,34 @@ function buildAnimationLibrary(gltf,extraData){
     if(clip.name==='Run_Back') actions.Run_Back=action;
     if(clip.name==='Run_Left') actions.Run_Left=action;
     if(clip.name==='Run_Right') actions.Run_Right=action;
+    if(clip.name==='Run_Shoot') actions.Run_Shoot=action;
     if(clip.name==='Roll') actions.Roll=action;
     if(clip.name==='Death') actions.Death=action;
+
+    const lowerClip=filterLowerBodyClip(clip,clip.name+'_Lower');
+    lowerBodyAnimations.set(clip.name.toLowerCase(),mixer.clipAction(lowerClip));
   }
 
   for(const data of extraData.animations||[]){
-    const clip=buildGodotClip(data);
+    let clip=buildGodotClip(data);
+
+    if(data.name==='Vault'){
+      clip=filterVaultRootMotion(clip);
+      actions.Vault=mixer.clipAction(clip);
+      rememberClip('Vault',actions.Vault);
+      continue;
+    }
+
     const action=mixer.clipAction(clip);
     rememberClip(data.name,action);
 
     const key=data.name.toLowerCase();
     if(key.includes('holdrifle')||key.includes('aimrifle')||key.includes('aimfire')){
       const filtered=filterUpperBodyClip(clip,data.name+'_Upper');
-      const upperAction=mixer.clipAction(filtered);
-      upperBodyAnimations.set(key,upperAction);
-    }
-    if(key==='vault'){
-      actions.Vault=action;
+      upperBodyAnimations.set(key,mixer.clipAction(filtered));
     }
   }
 
-  // Native GLTF gun poses remain available as fallbacks when the extracted
-  // rifle clips are unavailable.
   const nativeUpperNames=['Idle_Gun_Pointing','Idle_Gun','Gun_Shoot','Run_Shoot'];
   for(const name of nativeUpperNames){
     const clip=(gltf.animations||[]).find(c=>c.name===name);
@@ -2024,6 +2047,7 @@ function buildAnimationLibrary(gltf,extraData){
   window.__CHARACTER_TEMPLATE__={
     rig:window.__CHARACTER_RIG__,
     animations:()=>[...characterAnimations.keys()],
+    lowerAnimations:()=>[...lowerBodyAnimations.keys()],
     upperAnimations:()=>[...upperBodyAnimations.keys()],
     state:()=>({...characterMotion,animation:currentAction?.getClip().name||null}),
     play:name=>setCharacterAction(name,.08)
@@ -2040,10 +2064,13 @@ function makeWeapon(){
 
   weaponRoot=new THREE.Group();
   weaponRoot.name='Frontier Rifle';
-  player.add(weaponRoot);
 
-  // A single coherent rifle. It will follow the authored right-wrist pose
-  // instead of being driven by the camera.
+  const wrist=rigBones[normalizeBoneName('Wrist.R')];
+  (wrist||player).add(weaponRoot);
+
+  weaponRoot.position.set(.08,-.06,.08);
+  weaponRoot.rotation.set(0,0,0);
+
   box(.36,.26,.74,0,0,0,metal,weaponRoot);
   box(.22,.20,.88,0,.02,.62,dark,weaponRoot);
   box(.12,.12,1.02,0,.02,1.56,metal,weaponRoot);
@@ -2077,6 +2104,7 @@ function makeWeapon(){
   if(name) name.textContent='FRONTIER RIFLE';
   if(meta) meta.textContent='LMB FIRE • RMB AIM • 120 / ∞';
 }
+
 
 function setActionWeight(action,weight){
   if(!action) return;
@@ -2122,23 +2150,7 @@ function hideEmbeddedPistol(root){
 }
 
 function updateWeaponState(dt){
-  const wrist=rigBones[normalizeBoneName('Wrist.R')];
   if(weaponRoot){
-    if(wrist){
-      const p=wrist.getWorldPosition(new THREE.Vector3());
-      player.worldToLocal(p);
-      weaponRoot.position.copy(p);
-      weaponRoot.position.x+=.055;
-      weaponRoot.position.y-=.045;
-      weaponRoot.position.z+=.015;
-
-      // This transform is deliberately fixed relative to the authored wrist
-      // animation. The character animation, not the camera, points the rifle.
-      weaponRoot.rotation.set(0,Math.PI,0);
-    }else{
-      weaponRoot.position.set(.33,1.22,.04);
-      weaponRoot.rotation.set(0,Math.PI,0);
-    }
     weaponRoot.position.z-=recoilKick*.018;
   }
 
@@ -2148,7 +2160,6 @@ function updateWeaponState(dt){
   }
 
   recoilKick=Math.max(0,recoilKick-dt*8.5);
-  if(muzzleFlash) muzzleFlash.visible=recoilKick>.06;
 }
 
 function fireWeapon(){
@@ -2688,34 +2699,43 @@ function updateVault(dt){
 }
 
 function updateUpperBodyAnimation(moving,sprinting){
-  // One authored rifle layer, blended over whichever locomotion animation is
-  // currently driving the legs. No camera-direction quaternion hacks.
-  const hasAim=upperBodyAnimations.has('aimrifle');
   const hold=upperBodyAnimations.get('holdrifle-loop');
   const aim=upperBodyAnimations.get('aimrifle');
   const aimFire=upperBodyAnimations.get('aimfirerifle');
   const nativePoint=upperBodyAnimations.get('idle_gun_pointing');
+  const nativeIdle=upperBodyAnimations.get('idle_gun');
+
+  [hold,aim,aimFire,nativePoint,nativeIdle].forEach(a=>{
+    if(a) a.setEffectiveWeight(0);
+  });
 
   if(input.aim){
     if(hold){
       hold.enabled=true;
-      hold.setEffectiveWeight(hasAim?0.55:1);
+      hold.setLoop(THREE.LoopRepeat,Infinity);
+      hold.setEffectiveWeight(1);
       if(!hold.isRunning()) hold.reset().play();
+    }else if(nativePoint){
+      nativePoint.enabled=true;
+      nativePoint.setLoop(THREE.LoopRepeat,Infinity);
+      nativePoint.setEffectiveWeight(1);
+      if(!nativePoint.isRunning()) nativePoint.reset().play();
     }
+
     if(aim){
       aim.enabled=true;
       aim.setLoop(THREE.LoopOnce,1);
       aim.clampWhenFinished=true;
-      aim.setEffectiveWeight(1);
-      if(!aim.isRunning()) aim.reset().play();
-    }else if(nativePoint){
-      nativePoint.setEffectiveWeight(1);
-      nativePoint.play();
+      aim.setEffectiveWeight(.8);
+      if(!aim.isRunning() && aim.time<aim.getClip().duration-.0001){
+        aim.reset().fadeIn(.05).play();
+      }
     }
-  }else{
-    for(const a of [hold,aim,aimFire,nativePoint]){
-      if(a) a.fadeOut(.12);
-    }
+  }else if(nativeIdle){
+    nativeIdle.enabled=true;
+    nativeIdle.setLoop(THREE.LoopRepeat,Infinity);
+    nativeIdle.setEffectiveWeight(.65);
+    if(!nativeIdle.isRunning()) nativeIdle.reset().fadeIn(.12).play();
   }
 
   if(characterMotion.fireTimer>0){
@@ -2725,7 +2745,7 @@ function updateUpperBodyAnimation(moving,sprinting){
       shot.setLoop(THREE.LoopOnce,1);
       shot.clampWhenFinished=true;
       shot.setEffectiveWeight(1);
-      if(!shot.isRunning()) shot.reset().play();
+      if(!shot.isRunning()) shot.reset().fadeIn(.02).play();
     }
   }
 }
@@ -2867,26 +2887,30 @@ function updatePlayer(dt,time){
     const sprinting=sprint;
     let locomotionAction=null;
 
+    let fullLocomotionAction=null;
+    let lowerLocomotionAction=null;
+
     if(!grounded){
-      // Use authored locomotion while airborne; the root motion is supplied by
-      // game physics so jump arcs remain gameplay-controlled.
-      locomotionAction=actions.Run||actions.Idle;
+      fullLocomotionAction=actions.Run||actions.Idle;
     }else if(moving){
-      if(input.a&&!input.d) locomotionAction=actions.Run_Left||actions.Run;
-      else if(input.d&&!input.a) locomotionAction=actions.Run_Right||actions.Run;
-      else if(input.s&&!input.w) locomotionAction=actions.Run_Back||actions.Run;
-      else if(sprinting) locomotionAction=actions.Run||actions.Walk;
-      else locomotionAction=actions.Walk||actions.Run;
+      if(input.a&&!input.d) fullLocomotionAction=actions.Run_Left||actions.Run;
+      else if(input.d&&!input.a) fullLocomotionAction=actions.Run_Right||actions.Run;
+      else if(input.s&&!input.w) fullLocomotionAction=actions.Run_Back||actions.Run;
+      else if(sprinting) fullLocomotionAction=actions.Run||actions.Walk;
+      else fullLocomotionAction=actions.Walk||actions.Run;
     }else{
-      locomotionAction=actions.Idle||actions.Idle_Neutral;
+      fullLocomotionAction=actions.Idle||actions.Idle_Neutral;
     }
 
-    if(locomotionAction){
-      if(currentAction!==locomotionAction){
-        if(currentAction) currentAction.fadeOut(.10);
-        locomotionAction.reset().fadeIn(.10).play();
-        currentAction=locomotionAction;
-      }
+    const fullName=(fullLocomotionAction?.getClip().name||'Idle').toLowerCase();
+    lowerLocomotionAction=lowerBodyAnimations.get(fullName)||fullLocomotionAction;
+
+    const baseAction=input.aim?lowerLocomotionAction:fullLocomotionAction;
+
+    if(baseAction&&currentAction!==baseAction){
+      if(currentAction) currentAction.fadeOut(.10);
+      baseAction.reset().fadeIn(.10).play();
+      currentAction=baseAction;
     }
 
     updateUpperBodyAnimation(moving,sprinting);

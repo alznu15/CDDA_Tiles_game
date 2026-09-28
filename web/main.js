@@ -1867,408 +1867,199 @@ let mixer=null;
 let actions={};
 let currentAction=null;
 let characterReady=false;
-let rigBones={};
+
+
 let weaponRoot=null;
 let muzzleFlash=null;
 let muzzlePoint=null;
-let weaponBasePosition=new THREE.Vector3();
+let aimBones=null;
+let aimWeight=0;
+let recoilKick=0;
+let recoilYaw=0;
+let recoilPitch=0;
 let weaponInitialized=false;
 let ammo=120;
 let lastShotTime=0;
 let fireAccumulator=0;
+let gunActions={};
 
-const characterAnimations=new Map();
-const lowerBodyAnimations=new Map();
-const upperBodyAnimations=new Map();
-const locomotionNames={
-  idle:'Idle',
-  walk:'Walk',
-  run:'Run',
-  back:'Run_Back',
-  left:'Run_Left',
-  right:'Run_Right',
-  shootRun:'Run_Shoot'
-};
-
-const characterMotion={
-  state:'idle',
-  traversal:false,
-  traversalTimer:0,
-  traversalDuration:.82,
-  landTimer:0,
-  fireTimer:0
-};
-let wasAiming=false;
-
-const upperBodyBonePattern=/^(Head|Neck|Chest|Torso|Abdomen|Shoulder\\.[LR]|UpperArm\\.[LR]|LowerArm\\.[LR]|Wrist\\.[LR]|UpperHand\\.[LR]|LowerHand\\.[LR]|UpperThumb\\.[LR]|LowerThumb\\.[LR]|Thumb[123]\\.[LR]|(Index|Middle|Ring|Pinky)[1-4]\\.[LR])(?:\\.|$)/i;
-
-function normalizeBoneName(name){
-  return String(name||'').toLowerCase().replace(/[._:\\-\\s]/g,'');
+function hideBuiltInWeapons(root){
+  const hiddenNames=/^(ak|ak47|grenade|grenadelauncher|pistol|revolver|rocketlauncher|shortcannon|shotgun|shovel|smg|sniper|weapon|weapon_geometry)$/i;
+  root.traverse(o=>{
+    if(o.isMesh && hiddenNames.test(o.name||'')) o.visible=false;
+  });
 }
 
-function collectCharacterRig(){
-  rigBones={};
+function collectAimBones(){
+  aimBones={rightHand:null,leftHand:null,rightLowerArm:null,leftLowerArm:null};
+  const aliases={
+    rightHand:new Set(['hand_r','righthand','right_hand']),
+    leftHand:new Set(['hand_l','lefthand','left_hand']),
+    rightLowerArm:new Set(['lowerarm_r','rightlowerarm','right_lower_arm','forearm_r']),
+    leftLowerArm:new Set(['lowerarm_l','leftlowerarm','left_lower_arm','forearm_l'])
+  };
   characterRoot?.traverse(o=>{
     if(!o.isBone) return;
-    rigBones[normalizeBoneName(o.name)]=o;
+    const key=(o.name||'').toLowerCase().replace(/[.:]/g,'');
+    if(aliases.rightHand.has(key)) aimBones.rightHand=o;
+    else if(aliases.leftHand.has(key)) aimBones.leftHand=o;
+    else if(aliases.rightLowerArm.has(key)) aimBones.rightLowerArm=o;
+    else if(aliases.leftLowerArm.has(key)) aimBones.leftLowerArm=o;
   });
-
-  window.__CHARACTER_RIG__={
-    listBones:()=>Object.values(rigBones).map(b=>b.name),
-    getBone:name=>rigBones[normalizeBoneName(name)]||null,
-    setBoneRotation:(name,x=0,y=0,z=0,weight=1)=>{
-      const bone=rigBones[normalizeBoneName(name)];
-      if(!bone) return false;
-      const base=bone.quaternion.clone();
-      const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(x,y,z,'XYZ'));
-      bone.quaternion.copy(base).slerp(base.clone().multiply(q),THREE.MathUtils.clamp(weight,0,1));
-      return true;
-    }
-  };
 }
 
-function clipIsUpperBodyTrack(track){
-  const name=track.name||'';
-  const boneName=name.split('.')[0];
-  return upperBodyBonePattern.test(boneName);
-}
-
-function filterUpperBodyClip(clip,name){
-  const tracks=clip.tracks.filter(clipIsUpperBodyTrack);
-  return new THREE.AnimationClip(name,clip.duration,tracks);
-}
-function clipIsLowerBodyTrack(track){
-  return !clipIsUpperBodyTrack(track);
-}
-
-function filterLowerBodyClip(clip,name){
-  const tracks=clip.tracks.filter(clipIsLowerBodyTrack);
-  return new THREE.AnimationClip(name,clip.duration,tracks);
-}
-
-function filterVaultRootMotion(clip){
-  const tracks=clip.tracks.filter(track=>{
-    const boneName=(track.name||'').split('.')[0];
-    return normalizeBoneName(boneName)!=='root';
-  });
-  return new THREE.AnimationClip(clip.name+'_NoRoot',clip.duration,tracks);
-}
-
-function buildGodotClip(data){
-  const tracks=[];
-  for(const t of data.tracks||[]){
-    const times=[];
-    const positions=[];
-    const quaternions=[];
-    const scales=[];
-    for(const key of t.keys){
-      times.push(key.time);
-      positions.push(...key.position);
-      quaternions.push(...key.quaternion);
-      scales.push(...key.scale);
-    }
-    if(times.length<2) continue;
-    tracks.push(new THREE.VectorKeyframeTrack(
-      t.boneName+'.position',times,positions
-    ));
-    tracks.push(new THREE.QuaternionKeyframeTrack(
-      t.boneName+'.quaternion',times,quaternions
-    ));
-    // Keep authored scale where present; this is mostly 1, but preserving it
-    // avoids subtle deformation differences on the vault clip.
-    tracks.push(new THREE.VectorKeyframeTrack(
-      t.boneName+'.scale',times,scales
-    ));
-  }
-  const clip=new THREE.AnimationClip(data.name,data.length,tracks);
-  clip.userData.loop=!!data.loop;
-  return clip;
-}
-
-function rememberClip(name,action){
-  if(!action) return;
-  characterAnimations.set(name.toLowerCase(),action);
-}
-
-function quatFromEuler(rx,ry,rz){
-  return new THREE.Quaternion().setFromEuler(new THREE.Euler(rx,ry,rz,'XYZ'));
-}
-
-function makeCustomJumpClip(){
-  const duration=.78;
-  const times=[0,.12,.28,.48,.64,.78];
-  const poseTrack=(boneName,poses)=>{
-    const values=[];
-    for(const p of poses){
-      const q=quatFromEuler(p[0],p[1],p[2]);
-      values.push(q.x,q.y,q.z,q.w);
-    }
-    return new THREE.QuaternionKeyframeTrack(
-      boneName+'.quaternion',times,values
-    );
-  };
-
-  return new THREE.AnimationClip('Jump',duration,[
-    poseTrack('Hips',[
-      [0,0,0],[-.05,0,0],[-.10,0,0],[.04,0,0],[.02,0,0],[0,0,0]
-    ]),
-    poseTrack('UpperLeg.L',[
-      [0,0,0],[.28,0,0],[.52,0,0],[.24,0,0],[-.10,0,0],[0,0,0]
-    ]),
-    poseTrack('UpperLeg.R',[
-      [0,0,0],[.24,0,0],[.48,0,0],[.20,0,0],[-.08,0,0],[0,0,0]
-    ]),
-    poseTrack('LowerLeg.L',[
-      [0,0,0],[-.48,0,0],[-.92,0,0],[-.52,0,0],[.14,0,0],[0,0,0]
-    ]),
-    poseTrack('LowerLeg.R',[
-      [0,0,0],[-.44,0,0],[-.86,0,0],[-.46,0,0],[.12,0,0],[0,0,0]
-    ]),
-    poseTrack('Foot.L',[
-      [0,0,0],[.18,0,0],[.28,0,0],[.10,0,0],[-.16,0,0],[0,0,0]
-    ]),
-    poseTrack('Foot.R',[
-      [0,0,0],[.16,0,0],[.26,0,0],[.09,0,0],[-.14,0,0],[0,0,0]
-    ]),
-    poseTrack('Chest',[
-      [0,0,0],[-.07,0,0],[-.12,0,0],[.06,0,0],[.02,0,0],[0,0,0]
-    ]),
-    poseTrack('Head',[
-      [0,0,0],[.03,0,0],[.05,0,0],[-.02,0,0],[-.01,0,0],[0,0,0]
-    ]),
-    poseTrack('Shoulder.L',[
-      [0,0,0],[.10,0,.08],[.18,0,.10],[.08,0,.05],[-.03,0,0],[0,0,0]
-    ]),
-    poseTrack('Shoulder.R',[
-      [0,0,0],[.10,0,-.08],[.18,0,-.10],[.08,0,-.05],[-.03,0,0],[0,0,0]
-    ]),
-    poseTrack('UpperArm.L',[
-      [0,0,0],[-.12,0,.08],[-.28,0,.14],[-.10,0,.05],[.06,0,0],[0,0,0]
-    ]),
-    poseTrack('UpperArm.R',[
-      [0,0,0],[-.12,0,-.08],[-.28,0,-.14],[-.10,0,-.05],[.06,0,0],[0,0,0]
-    ])
-  ]);
-}
-
-
-function buildAnimationLibrary(gltf,extraData){
-  mixer=new THREE.AnimationMixer(characterRoot);
-  actions={};
-  characterAnimations.clear();
-  lowerBodyAnimations.clear();
-  upperBodyAnimations.clear();
-
-  for(const clip of gltf.animations||[]){
-    const action=mixer.clipAction(clip);
-    rememberClip(clip.name,action);
-
-    if(clip.name==='Idle') actions.Idle=action;
-    if(clip.name==='Walk') actions.Walk=action;
-    if(clip.name==='Run') actions.Run=action;
-    if(clip.name==='Run_Back') actions.Run_Back=action;
-    if(clip.name==='Run_Left') actions.Run_Left=action;
-    if(clip.name==='Run_Right') actions.Run_Right=action;
-    if(clip.name==='Run_Shoot') actions.Run_Shoot=action;
-    if(clip.name==='Roll') actions.Roll=action;
-    if(clip.name==='Death') actions.Death=action;
-
-    const lowerClip=filterLowerBodyClip(clip,clip.name+'_Lower');
-    lowerBodyAnimations.set(clip.name.toLowerCase(),mixer.clipAction(lowerClip));
-  }
-
-  const customJump=makeCustomJumpClip();
-  actions.Jump=mixer.clipAction(customJump);
-  rememberClip('Jump',actions.Jump);
-
-  for(const data of extraData.animations||[]){
-    let clip=buildGodotClip(data);
-
-    if(data.name==='Vault'){
-      clip=filterVaultRootMotion(clip);
-      actions.Vault=mixer.clipAction(clip);
-      rememberClip('Vault',actions.Vault);
-      continue;
-    }
-
-    const action=mixer.clipAction(clip);
-    rememberClip(data.name,action);
-
-    const key=data.name.toLowerCase();
-    if(key.includes('holdrifle')||key.includes('aimrifle')||key.includes('aimfire')){
-      const filtered=filterUpperBodyClip(clip,data.name+'_Upper');
-      upperBodyAnimations.set(key,mixer.clipAction(filtered));
-    }
-  }
-
-  const nativeUpperNames=['Idle_Gun_Pointing','Idle_Gun','Gun_Shoot','Run_Shoot'];
-  for(const name of nativeUpperNames){
-    const clip=(gltf.animations||[]).find(c=>c.name===name);
-    if(clip){
-      upperBodyAnimations.set(
-        name.toLowerCase(),
-        mixer.clipAction(filterUpperBodyClip(clip,name+'_Upper'))
-      );
-    }
-  }
-
-  window.__CHARACTER_TEMPLATE__={
-    rig:window.__CHARACTER_RIG__,
-    animations:()=>[...characterAnimations.keys()],
-    lowerAnimations:()=>[...lowerBodyAnimations.keys()],
-    upperAnimations:()=>[...upperBodyAnimations.keys()],
-    state:()=>({...characterMotion,animation:currentAction?.getClip().name||null}),
-    play:name=>setCharacterAction(name,.08)
-  };
-}
-
-function makeWeapon(rifleData){
-  if(weaponInitialized||!characterRoot||!rifleData) return;
+function makeWeapon(){
+  if(weaponInitialized||!characterRoot) return;
   weaponInitialized=true;
+  collectAimBones();
 
-  const materialFor=(id)=>{
-    const palettes={
-      2:new THREE.MeshStandardMaterial({color:0x465158,roughness:.38,metalness:.78}),
-      4:new THREE.MeshStandardMaterial({color:0x17333c,emissive:0x22d9ff,emissiveIntensity:2.0,roughness:.28,metalness:.36}),
-      6:new THREE.MeshStandardMaterial({color:0x11171b,roughness:.62,metalness:.38}),
-      8:new THREE.MeshStandardMaterial({color:0x71808a,roughness:.42,metalness:.68}),
-      10:new THREE.MeshStandardMaterial({color:0x20292f,roughness:.48,metalness:.58}),
-      13:new THREE.MeshBasicMaterial({color:0xffdf88,transparent:true,opacity:.76,depthWrite:false})
-    };
-    return palettes[id]||palettes[6];
-  };
+  const metal=new THREE.MeshStandardMaterial({color:0x20262a,roughness:.38,metalness:.78});
+  const dark=new THREE.MeshStandardMaterial({color:0x0f1417,roughness:.54,metalness:.34});
+  const polymer=new THREE.MeshStandardMaterial({color:0x30383c,roughness:.72,metalness:.10});
 
-  const weaponModel=new THREE.Group();
-  weaponModel.name='Native Frontier Rifle Geometry';
+  weaponRoot=new THREE.Group();
+  weaponRoot.name='AR-01 Carbine';
+  player.add(weaponRoot);
+  weaponRoot.rotation.order='YXZ';
 
-  for(const meshData of rifleData.meshes||[]){
-    for(const surface of meshData.surfaces||[]){
-      if(!surface.positions?.length||!surface.indices?.length) continue;
+  // Custom weapon forward is +Z, matching the player facing axis.
+  box(.34,.26,.82,0,0,-.05,metal,weaponRoot);
+  box(.22,.19,.72,0,.02,.58,dark,weaponRoot);
+  box(.12,.12,1.04,0,.02,1.28,metal,weaponRoot);
+  box(.18,.32,.30,0,-.18,-.42,polymer,weaponRoot);
+  box(.16,.36,.28,0,-.17,.02,dark,weaponRoot);
+  box(.11,.11,.24,0,.14,.36,metal,weaponRoot);
+  box(.08,.10,.18,0,.18,.64,metal,weaponRoot);
 
-      const geometry=new THREE.BufferGeometry();
-      geometry.setAttribute(
-        'position',
-        new THREE.Float32BufferAttribute(surface.positions,3)
-      );
-      if(surface.normals?.length){
-        geometry.setAttribute(
-          'normal',
-          new THREE.Float32BufferAttribute(surface.normals,3)
-        );
-      }else{
-        geometry.computeVertexNormals();
-      }
-      if(surface.uvs?.length){
-        geometry.setAttribute(
-          'uv',
-          new THREE.Float32BufferAttribute(surface.uvs,2)
-        );
-      }
-      geometry.setIndex(surface.indices);
-      geometry.computeBoundingSphere();
-
-      const mesh=new THREE.Mesh(geometry,materialFor(surface.material));
-      mesh.castShadow=true;
-      mesh.receiveShadow=true;
-      weaponModel.add(mesh);
-    }
-  }
-
-  weaponRoot=weaponModel;
-  weaponRoot.name='Frontier Rifle';
-  const wrist=rigBones[normalizeBoneName('Wrist.R')];
-  (wrist||player).add(weaponRoot);
-
-  // The source rifle is authored around the same hand-held coordinate system.
-  // Keep the local transform simple: the wrist animation supplies orientation.
-  weaponBasePosition.set(.08,-.055,.08);
-  weaponRoot.position.copy(weaponBasePosition);
-  weaponRoot.rotation.set(0,0,0);
-  weaponRoot.scale.setScalar(1.0);
-
-  // The source asset exposes a FirePoint at approximately +Z. Use the native
-  // geometry convention and keep the firing point as a child of the rifle.
-  muzzlePoint=new THREE.Object3D();
-  muzzlePoint.position.set(0,.01,.80);
-  weaponRoot.add(muzzlePoint);
+  const muzzle=new THREE.Mesh(new THREE.CylinderGeometry(.055,.055,.12,10),dark);
+  muzzle.rotation.x=Math.PI/2;
+  muzzle.position.set(0,.02,1.80);
+  muzzle.castShadow=true;
+  weaponRoot.add(muzzle);
 
   muzzleFlash=new THREE.Mesh(
-    new THREE.ConeGeometry(.11,.30,8),
+    new THREE.ConeGeometry(.13,.38,8),
     new THREE.MeshBasicMaterial({
-      color:0xffe8a0,
-      transparent:true,
-      opacity:.92,
-      depthWrite:false,
-      side:THREE.DoubleSide
+      color:0xffe8a0,transparent:true,opacity:.92,
+      depthWrite:false,side:THREE.DoubleSide
     })
   );
   muzzleFlash.rotation.x=-Math.PI/2;
-  muzzleFlash.position.set(0,.01,.72);
+  muzzleFlash.position.set(0,.02,2.02);
   muzzleFlash.visible=false;
   weaponRoot.add(muzzleFlash);
 
+  muzzlePoint=new THREE.Object3D();
+  muzzlePoint.position.set(0,.02,2.16);
+  weaponRoot.add(muzzlePoint);
+
   const name=document.querySelector('.weaponName');
   const meta=document.querySelector('.weaponMeta');
-  if(name) name.textContent='FRONTIER RIFLE';
+  if(name) name.textContent='AR-01 CARBINE';
   if(meta) meta.textContent='LMB FIRE • RMB AIM • 120 / ∞';
+  updateAimVisual(0);
 }
 
-
-function setActionWeight(action,weight){
-  if(!action) return;
-  action.enabled=weight>0.001;
-  action.setEffectiveWeight(THREE.MathUtils.clamp(weight,0,1));
+function updateAimVisual(weight){
+  const crosshair=document.getElementById('crosshair');
+  if(!crosshair) return;
+  crosshair.style.transform='translate(-50%,-50%) scale('+(1-weight*.18)+')';
+  crosshair.style.opacity=String(.72+.28*weight);
 }
 
-function setCharacterAction(name,fade=.12){
-  const action=characterAnimations.get(name.toLowerCase())||actions[name];
-  if(!action) return null;
-  if(currentAction===action) return action;
-  if(currentAction) currentAction.fadeOut(fade);
-  action.reset().fadeIn(fade).play();
-  currentAction=action;
-  return action;
+function getRoleForward(){
+  return new THREE.Vector3(0,0,1).applyQuaternion(player.quaternion).normalize();
 }
 
-function stopAction(action,fade=.08){
-  if(!action) return;
-  action.fadeOut(fade);
-}
-
-function playUpperBody(name,weight=1,fade=.12,once=false){
-  const action=upperBodyAnimations.get(name.toLowerCase());
-  if(!action) return null;
-  action.enabled=true;
-  action.setLoop(once?THREE.LoopOnce:THREE.LoopRepeat,once?1:Infinity);
-  action.clampWhenFinished=once;
-  if(!action.isRunning()) action.reset().fadeIn(fade).play();
-  action.setEffectiveWeight(weight);
-  return action;
-}
-
-function stopUpperBody(name,fade=.12){
-  const action=upperBodyAnimations.get(name.toLowerCase());
-  if(action) action.fadeOut(fade);
-}
-
-function hideEmbeddedPistol(root){
-  root.traverse(o=>{
-    if(o.isMesh && /^Pistol$/i.test(o.name)) o.visible=false;
-  });
+function getAimDirection(){
+  // Weapon and ballistics use character/player facing, never camera direction.
+  return getRoleForward();
 }
 
 function updateWeaponState(dt){
   if(weaponRoot){
-    weaponRoot.position.copy(weaponBasePosition);
-    weaponRoot.position.z-=recoilKick*.018;
+    let anchor;
+    if(aimBones?.rightHand){
+      anchor=aimBones.rightHand.getWorldPosition(new THREE.Vector3());
+      if(aimBones.leftHand){
+        const support=aimBones.leftHand.getWorldPosition(new THREE.Vector3());
+        anchor.lerp(support,.16);
+      }
+    }else{
+      anchor=player.getWorldPosition(new THREE.Vector3()).add(
+        new THREE.Vector3(.34,1.25,0).applyQuaternion(player.quaternion)
+      );
+    }
+
+    player.worldToLocal(anchor);
+    weaponRoot.position.copy(anchor);
+    weaponRoot.position.y-=.035;
+    weaponRoot.position.z-=recoilKick*.022;
+
+    // Never rotate the arm bones. The weapon direction comes only from player.
+    weaponRoot.quaternion.identity();
   }
 
   if(muzzleFlash){
-    muzzleFlash.visible=recoilKick>.06;
-    muzzleFlash.scale.setScalar(.78+recoilKick*.82);
+    muzzleFlash.visible=recoilKick>0.06;
+    muzzleFlash.scale.setScalar(.75+recoilKick*.9);
   }
 
+  updateAimVisual(aimWeight);
   recoilKick=Math.max(0,recoilKick-dt*8.5);
+  recoilYaw=THREE.MathUtils.damp(recoilYaw,0,12,dt);
+  recoilPitch=THREE.MathUtils.damp(recoilPitch,0,12,dt);
+}
+
+function raycastStatic(origin,direction,maxDistance=260){
+  cameraRay.origin.copy(origin);
+  cameraRay.direction.copy(direction).normalize();
+  let best=maxDistance;
+  const hit=new THREE.Vector3();
+
+  for(const c of staticColliders){
+    const halfW=c.shape==='circle'?c.radius:c.w*.5;
+    const halfD=c.shape==='circle'?c.radius:c.d*.5;
+    const baseY=Number.isFinite(c.baseY)?c.baseY:0;
+    const topY=baseY+(Number.isFinite(c.h)?c.h:32);
+    cameraBox.min.set(c.x-halfW,baseY,c.z-halfD);
+    cameraBox.max.set(c.x+halfW,topY,c.z+halfD);
+    const p=cameraRay.intersectBox(cameraBox,hit);
+    if(!p) continue;
+    const d=p.distanceTo(origin);
+    if(d>.05&&d<best) best=d;
+  }
+  return {distance:best,point:origin.clone().addScaledVector(direction,best)};
+}
+
+function spawnTracer(origin,point){
+  const geometry=new THREE.BufferGeometry().setFromPoints([origin,point]);
+  const material=new THREE.LineBasicMaterial({
+    color:0xffd38a,transparent:true,opacity:.9,depthWrite:false
+  });
+  const line=new THREE.Line(geometry,material);
+  world.add(line);
+  setTimeout(()=>{
+    world.remove(line);
+    geometry.dispose();
+    material.dispose();
+  },70);
+}
+
+function spawnImpact(point){
+  const impact=new THREE.Mesh(
+    new THREE.SphereGeometry(.055,6,6),
+    new THREE.MeshBasicMaterial({
+      color:0xffd76d,transparent:true,opacity:.95,depthWrite:false
+    })
+  );
+  impact.position.copy(point);
+  world.add(impact);
+  setTimeout(()=>{
+    world.remove(impact);
+    impact.geometry.dispose();
+    impact.material.dispose();
+  },110);
 }
 
 function fireWeapon(){
@@ -2279,7 +2070,8 @@ function fireWeapon(){
   lastShotTime=now;
   ammo--;
   recoilKick=1;
-  characterMotion.fireTimer=.16;
+  recoilPitch=.08;
+  recoilYaw=(Math.random()-.5)*.045;
 
   const origin=camera.position.clone();
   const direction=getRoleForward();
@@ -2293,75 +2085,117 @@ function fireWeapon(){
   if(meta) meta.textContent='LMB FIRE • RMB AIM • '+ammo+' / ∞';
 }
 
+function chooseAnimation(base){
+  const key=base.toLowerCase();
+  return gunActions[key]||actions[base]||actions.Idle||null;
+}
+
+function setAction(name,fade=.18){
+  const next=chooseAnimation(name);
+  if(!next) return;
+  if(currentAction===next) return;
+  if(currentAction) currentAction.fadeOut(fade);
+  next.reset().fadeIn(fade).play();
+  currentAction=next;
+}
+
 async function loadCharacter(){
   const loading=document.getElementById('loading');
   if(!loader){
     loading.textContent='Character asset skipped; gameplay is available.';
     return;
   }
-
   try{
-    loading.textContent='Loading native sci-fi character rig…';
+    loading.textContent='Loading replacement character…';
 
-    const [gltf,extraData,rifleData]=await Promise.all([
-      loader.loadAsync('./assets/player/Stealth_SciFi_Soldier.gltf'),
-      fetch('./assets/player/Stealth_Rifle_Animations.json').then(r=>{
-        if(!r.ok) throw new Error('Animation library HTTP '+r.status);
-        return r.json();
-      }),
-      fetch('./assets/player/Stealth_Rifle_Geometry.json').then(r=>{
-        if(!r.ok) throw new Error('Rifle geometry HTTP '+r.status);
-        return r.json();
-      })
-    ]);
+    // New character: Quaternius humanoid + Universal Animation Library.
+    // The old Character_Soldier asset is gone from the player pipeline, so its
+    // embedded firearm meshes can no longer fight the custom weapon system.
+    const gltf=await loader.loadAsync(
+      'https://raw.githubusercontent.com/NafisRayan/Animate-Rigged-Humanoid-No-Blender/main/test/human_male.glb'
+    );
 
     characterRoot=gltf.scene;
-    hideEmbeddedPistol(characterRoot);
-
+    hideBuiltInWeapons(characterRoot);
     characterRoot.traverse(o=>{
-      if(o.isMesh){
-        o.castShadow=true;
-        o.receiveShadow=true;
-      }
+      if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}
     });
+
+    characterRoot.visible=true;
+    characterRoot.scale.setScalar(1);
 
     const initialBox=new THREE.Box3().setFromObject(characterRoot);
     const initialSize=initialBox.getSize(new THREE.Vector3());
-    if(initialSize.y>0){
-      characterBaseScale=1.95/initialSize.y;
+    const initialHeight=initialSize.y;
+    if(initialHeight>0){
+      characterBaseScale=1.95/initialHeight;
       characterRoot.scale.setScalar(characterBaseScale);
     }
 
+    // Keep the replacement on the same +Z gameplay-forward axis.
     characterRoot.rotation.y=0;
-    characterRoot.updateMatrixWorld(true);
 
+    characterRoot.updateMatrixWorld(true);
     const finalBox=new THREE.Box3().setFromObject(characterRoot);
-    if(Number.isFinite(finalBox.min.y)){
-      characterRoot.position.y=-finalBox.min.y;
-    }
+    if(Number.isFinite(finalBox.min.y)) characterRoot.position.y=-finalBox.min.y;
 
     player.add(characterRoot);
     characterRoot.updateMatrixWorld(true);
+    makeWeapon();
 
-    collectCharacterRig();
-    buildAnimationLibrary(gltf,extraData);
-    makeWeapon(rifleData);
+    mixer=new THREE.AnimationMixer(characterRoot);
+    actions={};
+    gunActions={};
 
-    setCharacterAction('Idle',0);
+    const clipMap=new Map();
+    for(const clip of gltf.animations||[]){
+      const normalized=clip.name.toLowerCase().replace(/\s+/g,'_');
+      const action=mixer.clipAction(clip);
+      clipMap.set(normalized,action);
+
+      if(normalized==='idle'&&!actions.Idle) actions.Idle=action;
+      if(normalized==='walk'&&!actions.Walk) actions.Walk=action;
+      if(normalized==='run'&&!actions.Run) actions.Run=action;
+      if((normalized==='jump'||normalized==='jump_start'||normalized==='jump_loop')&&!actions.Jump) actions.Jump=action;
+
+      // Exact armed-locomotion names win. Shooting variants are never
+      // allowed to become the idle/walk/run loop accidentally.
+      if(normalized==='idle_gun') gunActions.Idle=gunActions.Idle||action;
+      if(normalized==='walk_gun') gunActions.Walk=gunActions.Walk||action;
+      if(normalized==='run_gun') gunActions.Run=gunActions.Run||action;
+      if(normalized==='jump_gun') gunActions.Jump=gunActions.Jump||action;
+    }
+
+    const findClip=(patterns)=>{
+      for(const p of patterns){
+        const exact=clipMap.get(p);
+        if(exact) return exact;
+      }
+      for(const [name,action] of clipMap){
+        if(patterns.some(p=>name.includes(p))) return action;
+      }
+      return null;
+    };
+
+    gunActions.Idle=gunActions.Idle||findClip(['idle_gun','idle_gun_pointing','idle_weapon'])||actions.Idle;
+    gunActions.Walk=gunActions.Walk||findClip(['walk_gun','walk_weapon'])||actions.Walk;
+    gunActions.Run=gunActions.Run||findClip(['run_gun','run_weapon'])||actions.Run;
+    gunActions.Jump=gunActions.Jump||findClip(['jump_gun','jump_weapon','run_gun_shoot'])||actions.Jump;
+
+    setAction('Idle',0);
     characterReady=true;
-    loading.textContent='Native sci-fi character ready.';
-
-    console.log('Native character ready',{
-      bones:Object.keys(rigBones).length,
-      animations:[...characterAnimations.keys()],
-      upperAnimations:[...upperBodyAnimations.keys()]
+    loading.textContent='Replacement character ready.';
+    console.log('Replacement character loaded:',{
+      clipCount:(gltf.animations||[]).length,
+      gunActions:Object.fromEntries(Object.entries(gunActions).map(([k,v])=>[k,v?.getClip().name||null])),
+      rightHand:aimBones?.rightHand?.name||null,
+      leftHand:aimBones?.leftHand?.name||null
     });
   }catch(err){
-    console.error('Native character load failed',err);
-    loading.textContent='Character asset failed to load; gameplay remains available.';
+    console.error('Character replacement load failed',err);
+    loading.textContent='Replacement character failed to load; gameplay remains available.';
   }
 }
-
 const spawnRing=new THREE.Mesh(
   new THREE.RingGeometry(1.05,1.17,40),
   new THREE.MeshBasicMaterial({color:0x9de5ff,transparent:true,opacity:.8,side:THREE.DoubleSide})
@@ -2709,174 +2543,14 @@ function updateSprintJumpArm(){
   if(!combo){
     sprintJumpComboArmed=false;
   }
-
-  wasAiming=input.aim;
-}
-
-function findLowObstacle(moveDir){
-  if(!moveDir||moveDir.lengthSq()<1e-5) return null;
-  const probe=player.position.clone().addScaledVector(moveDir,playerRadius+.30);
-  let best=null;
-  let bestDistance=Infinity;
-
-  for(const c of staticColliders){
-    if(!c.jumpable) continue;
-    const baseY=Number.isFinite(c.baseY)?c.baseY:0;
-    const topY=Number.isFinite(c.surfaceHeight)
-      ? c.surfaceHeight
-      : baseY+(Number.isFinite(c.h)?c.h:32);
-    const height=topY-player.position.y;
-    if(height<.42||height>1.18) continue;
-
-    let inside=false;
-    if(c.shape==='circle'){
-      const dx=probe.x-c.x,dz=probe.z-c.z;
-      inside=dx*dx+dz*dz<=(c.radius+.14)*(c.radius+.14);
-    }else{
-      inside=Math.abs(probe.x-c.x)<=c.w*.5+.14 &&
-             Math.abs(probe.z-c.z)<=c.d*.5+.14;
-    }
-    if(!inside) continue;
-
-    const d=(c.x-player.position.x)**2+(c.z-player.position.z)**2;
-    if(d<bestDistance){bestDistance=d;best=c;}
-  }
-  return best;
-}
-
-function beginVault(c,moveDir){
-  if(characterMotion.traversal||!c||!characterReady) return false;
-
-  const baseY=Number.isFinite(c.baseY)?c.baseY:0;
-  const topY=Number.isFinite(c.surfaceHeight)
-    ? c.surfaceHeight
-    : baseY+(Number.isFinite(c.h)?c.h:32);
-  const h=topY-player.position.y;
-  if(h<.42||h>1.18) return false;
-
-  const halfW=c.shape==='circle'?c.radius:c.w*.5;
-  const halfD=c.shape==='circle'?c.radius:c.d*.5;
-  const travel=Math.max(
-    1.0,
-    halfW*Math.abs(moveDir.x)+halfD*Math.abs(moveDir.z)+playerRadius+.56
-  );
-
-  characterMotion.traversal=true;
-  characterMotion.state='vault';
-  characterMotion.traversalTimer=0;
-  characterMotion.traversalDuration=.82;
-  characterMotion.traversalStart=player.position.clone();
-  characterMotion.traversalDir=moveDir.clone().normalize();
-  characterMotion.traversalTarget=player.position.clone()
-    .addScaledVector(characterMotion.traversalDir,travel);
-  characterMotion.traversalTop=topY;
-
-  const vault=actions.Vault;
-  if(vault){
-    setCharacterAction('Vault',.05);
-    vault.setLoop(THREE.LoopOnce,1);
-    vault.clampWhenFinished=true;
-  }
-  return true;
-}
-
-function updateVault(dt){
-  if(!characterMotion.traversal) return false;
-
-  characterMotion.traversalTimer+=dt;
-  const t=THREE.MathUtils.clamp(
-    characterMotion.traversalTimer/characterMotion.traversalDuration,0,1
-  );
-  const eased=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
-
-  const start=characterMotion.traversalStart;
-  const target=characterMotion.traversalTarget;
-  player.position.x=THREE.MathUtils.lerp(start.x,target.x,eased);
-  player.position.z=THREE.MathUtils.lerp(start.z,target.z,eased);
-
-  const floor=groundHeightAt(player.position.x,player.position.z);
-  const arc=Math.sin(t*Math.PI);
-  player.position.y=Math.max(
-    floor,
-    THREE.MathUtils.lerp(player.position.y,characterMotion.traversalTop+.05,arc)
-  );
-
-  if(t>=1){
-    characterMotion.traversal=false;
-    characterMotion.state='land';
-    characterMotion.landTimer=.12;
-    player.position.y=floor;
-    grounded=true;
-    verticalVelocity=0;
-    resolvePlayerPenetration();
-  }
-  return true;
-}
-
-function updateUpperBodyAnimation(moving,sprinting){
-  const hold=upperBodyAnimations.get('holdrifle-loop');
-  const aim=upperBodyAnimations.get('aimrifle');
-  const aimFire=upperBodyAnimations.get('aimfirerifle');
-  const nativePoint=upperBodyAnimations.get('idle_gun_pointing');
-  const nativeIdle=upperBodyAnimations.get('idle_gun');
-
-  [hold,aim,aimFire,nativePoint,nativeIdle].forEach(a=>{
-    if(a) a.setEffectiveWeight(0);
-  });
-
-  if(input.aim){
-    if(hold){
-      hold.enabled=true;
-      hold.setLoop(THREE.LoopRepeat,Infinity);
-      hold.setEffectiveWeight(1);
-      if(!hold.isRunning()) hold.reset().play();
-    }else if(nativePoint){
-      nativePoint.enabled=true;
-      nativePoint.setLoop(THREE.LoopRepeat,Infinity);
-      nativePoint.setEffectiveWeight(1);
-      if(!nativePoint.isRunning()) nativePoint.reset().play();
-    }
-
-    if(aim){
-      aim.enabled=true;
-      aim.setLoop(THREE.LoopOnce,1);
-      aim.clampWhenFinished=true;
-      aim.setEffectiveWeight(.8);
-      if(!wasAiming){
-        aim.reset().fadeIn(.05).play();
-      }else if(!aim.isRunning()){
-        aim.time=aim.getClip().duration;
-      }
-    }
-  }else if(nativeIdle){
-    nativeIdle.enabled=true;
-    nativeIdle.setLoop(THREE.LoopRepeat,Infinity);
-    nativeIdle.setEffectiveWeight(.65);
-    if(!nativeIdle.isRunning()) nativeIdle.reset().fadeIn(.12).play();
-  }
-
-  if(characterMotion.fireTimer>0){
-    const shot=aimFire||upperBodyAnimations.get('gun_shoot');
-    if(shot){
-      if(hold) hold.setEffectiveWeight(0);
-      if(aim) aim.setEffectiveWeight(0);
-      if(nativePoint) nativePoint.setEffectiveWeight(0);
-      if(nativeIdle) nativeIdle.setEffectiveWeight(0);
-      shot.enabled=true;
-      shot.setLoop(THREE.LoopOnce,1);
-      shot.clampWhenFinished=true;
-      shot.setEffectiveWeight(1);
-      if(!shot.isRunning()) shot.reset().fadeIn(.02).play();
-    }
-  }
 }
 
 function updatePlayer(dt,time){
-  const wasGrounded=grounded;
+  updateSprintJumpArm();
+
   const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
   const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
   const move=new THREE.Vector3();
-
   if(input.w) move.add(forward);
   if(input.s) move.sub(forward);
   if(input.d) move.add(right);
@@ -2888,102 +2562,68 @@ function updatePlayer(dt,time){
   const sprint=input.shift;
   const speed=input.aim ? (sprint?8.2:4.9) : (sprint?10.5:6.2);
 
-  if(!characterMotion.traversal){
-    if(input.aim && started){
-      const targetYaw=yaw+Math.PI;
-      const diff=THREE.MathUtils.euclideanModulo(
-        targetYaw-player.rotation.y+Math.PI,Math.PI*2
-      )-Math.PI;
-      player.rotation.y+=diff*Math.min(1,dt*18);
+  if(input.aim && started){
+    const targetYaw=yaw+Math.PI;
+    const diff=THREE.MathUtils.euclideanModulo(targetYaw-player.rotation.y+Math.PI,Math.PI*2)-Math.PI;
+    player.rotation.y+=diff*Math.min(1,dt*18);
+  }
+
+  if(moving && started){
+    const currentGround=groundHeightAt(player.position.x,player.position.z);
+    const step=move.clone().multiplyScalar(speed*dt);
+    const nx=player.position.x+step.x;
+    const nz=player.position.z+step.z;
+
+    if(canTraverseTo(nx,player.position.z,currentGround,player.position.y,!grounded)){
+      player.position.x=nx;
+    }
+    if(canTraverseTo(player.position.x,nz,groundHeightAt(player.position.x,player.position.z),player.position.y,!grounded)){
+      player.position.z=nz;
     }
 
-    if(moving && started){
-      const currentGround=groundHeightAt(player.position.x,player.position.z);
-      const step=move.clone().multiplyScalar(speed*dt);
-      const nx=player.position.x+step.x;
-      const nz=player.position.z+step.z;
-      const startX=player.position.x;
-      const startZ=player.position.z;
+    if(!input.aim){
+      const targetYaw=Math.atan2(step.x,step.z);
+      const diff=THREE.MathUtils.euclideanModulo(targetYaw-player.rotation.y+Math.PI,Math.PI*2)-Math.PI;
+      player.rotation.y+=diff*Math.min(1,dt*12);
+    }
+  }
 
-      if(Math.abs(step.x)>1e-5 && canTraverseTo(
-        nx,player.position.z,currentGround,player.position.y,!grounded
-      )){
-        player.position.x=nx;
-      }
+  const surfaceY=groundHeightAt(player.position.x,player.position.z);
 
-      if(Math.abs(step.z)>1e-5 && canTraverseTo(
-        player.position.x,nz,
-        groundHeightAt(player.position.x,player.position.z),
-        player.position.y,!grounded
-      )){
-        player.position.z=nz;
-      }
+  if(started){
+    // Tiny compatibility queue for platforms that deliver Space slightly late.
+    if(jumpRequest && grounded && performance.now()-lastSpaceDown<220){
+      performJump();
+      jumpRequest=false;
+    }else if(jumpRequest && performance.now()-lastSpaceDown>=220){
+      jumpRequest=false;
+    }
 
-      const actualMoved=Math.hypot(
-        player.position.x-startX,
-        player.position.z-startZ
+    if(grounded){
+      // Terrain traversal is automatic: small road/sidewalk height changes are
+      // absorbed as a smooth footstep/step-up animation instead of requiring jump.
+      verticalVelocity=0;
+      player.position.y=THREE.MathUtils.damp(
+        player.position.y,
+        surfaceY,
+        terrainSnapRate,
+        dt
       );
-
-      if(actualMoved<Math.min(.02,speed*dt*.2)&&grounded){
-        const obstacle=findLowObstacle(move);
-        if(obstacle) beginVault(obstacle,move);
-      }
-
-      if(!input.aim){
-        const targetYaw=Math.atan2(step.x,step.z);
-        const diff=THREE.MathUtils.euclideanModulo(
-          targetYaw-player.rotation.y+Math.PI,Math.PI*2
-        )-Math.PI;
-        player.rotation.y+=diff*Math.min(1,dt*12);
-      }
-    }
-
-    const surfaceY=groundHeightAt(player.position.x,player.position.z);
-
-    if(started){
-      if(jumpRequest&&grounded&&performance.now()-lastSpaceDown<220){
-        performJump();
-        jumpRequest=false;
-      }else if(jumpRequest&&performance.now()-lastSpaceDown>=220){
-        jumpRequest=false;
-      }
-
-      if(grounded){
+    }else{
+      verticalVelocity+=gravity*dt;
+      const nextY=player.position.y+verticalVelocity*dt;
+      const coverTop=topSurfaceAt(player.position.x,player.position.z);
+      const landingY=Math.max(surfaceY,coverTop);
+      if(nextY<=landingY){
+        player.position.y=landingY;
         verticalVelocity=0;
-        player.position.y=THREE.MathUtils.damp(
-          player.position.y,surfaceY,terrainSnapRate,dt
-        );
+        grounded=true;
+        resolvePlayerPenetration();
       }else{
-        verticalVelocity+=gravity*dt;
-        const nextY=player.position.y+verticalVelocity*dt;
-        const coverTop=topSurfaceAt(player.position.x,player.position.z);
-        const landingY=Math.max(surfaceY,coverTop);
-
-        if(nextY<=landingY){
-          player.position.y=landingY;
-          verticalVelocity=0;
-          grounded=true;
-          resolvePlayerPenetration();
-        }else{
-          player.position.y=nextY;
-          grounded=false;
-        }
+        player.position.y=nextY;
+        grounded=false;
       }
     }
-  }else{
-    updateVault(dt);
-  }
-
-  if(!wasGrounded&&grounded){
-    characterMotion.landTimer=.12;
-  }
-
-  if(characterMotion.landTimer>0){
-    characterMotion.landTimer=Math.max(0,characterMotion.landTimer-dt);
-  }
-
-  if(characterMotion.fireTimer>0){
-    characterMotion.fireTimer=Math.max(0,characterMotion.fireTimer-dt);
   }
 
   const spawnProgress=THREE.MathUtils.clamp((time-spawnTime)/900,0,1);
@@ -2995,49 +2635,41 @@ function updatePlayer(dt,time){
   if(mixer) mixer.update(dt);
 
   const carousel=world.userData.carouselRide;
-  if(carousel) carousel.rotation.y+=dt*carousel.userData.rotationSpeed;
+  if(carousel) carousel.rotation.y += dt*carousel.userData.rotationSpeed;
 
   const fountain=world.userData.fountain;
   if(fountain){
-    fountain.userData.updateParticles(dt,time);
+    fountain.userData.updateParticles(dt, time);
     fountain.userData.coreRing.rotation.z=time*.00055;
     fountain.userData.pool.rotation.y=time*.00005;
   }
 
-  if(characterReady&&!characterMotion.traversal){
-    const sprinting=sprint;
-    let locomotionAction=null;
-
-    let fullLocomotionAction=null;
-    let lowerLocomotionAction=null;
-
-    if(!grounded){
-      fullLocomotionAction=actions.Jump||actions.Run||actions.Idle;
-    }else if(moving){
-      if(input.a&&!input.d) fullLocomotionAction=actions.Run_Left||actions.Run;
-      else if(input.d&&!input.a) fullLocomotionAction=actions.Run_Right||actions.Run;
-      else if(input.s&&!input.w) fullLocomotionAction=actions.Run_Back||actions.Run;
-      else if(sprinting) fullLocomotionAction=actions.Run||actions.Walk;
-      else fullLocomotionAction=actions.Walk||actions.Run;
+  if(characterReady){
+    if(sprintJump.active){
+      const jumpAction=gunActions.Jump||actions.Jump||gunActions.Run||actions.Run||gunActions.Idle||actions.Idle;
+      if(jumpAction) setAction(jumpAction,.06);
+      sprintJump.phase=Math.min(1,(performance.now()-sprintJump.timer)/620);
+      if(sprintJump.phase>=1 && grounded) sprintJump.active=false;
     }else{
-      fullLocomotionAction=actions.Idle||actions.Idle_Neutral;
+      setAction(moving?(sprint?'Run':'Walk'):'Idle',.15);
     }
-
-    const fullName=(fullLocomotionAction?.getClip().name||'Idle').toLowerCase();
-    lowerLocomotionAction=lowerBodyAnimations.get(fullName)||fullLocomotionAction;
-
-    const baseAction=input.aim?lowerLocomotionAction:fullLocomotionAction;
-
-    if(baseAction&&currentAction!==baseAction){
-      if(currentAction) currentAction.fadeOut(.10);
-      baseAction.reset().fadeIn(.10).play();
-      currentAction=baseAction;
-    }
-
-    updateUpperBodyAnimation(moving,sprinting);
   }
 
-  updateWeaponState(dt);
+  if(weaponRoot){
+    aimWeight=THREE.MathUtils.damp(
+      aimWeight,
+      input.aim?1:0,
+      16,
+      dt
+    );
+    updateWeaponState(dt);
+  }
+
+  if(input.fire) fireAccumulator+=dt;
+  while(input.fire && fireAccumulator>=.088){
+    fireAccumulator-=.088;
+    fireWeapon();
+  }
 }
 
 function getCameraClearDistance(target,desired){

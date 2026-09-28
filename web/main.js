@@ -155,11 +155,14 @@ const box = (sx,sy,sz,x,y,z,mat,parent=world) => {
   return m;
 };
 
-function collider(x,z,w,d,pad=.7,h=32,passable=null,walkableTop=false) {
-  staticColliders.push({shape:'box',x,z,w:w+pad,d:d+pad,h,passable,walkableTop});
+function collider(x,z,w,d,pad=.7,h=32,passable=null,walkableTop=false,jumpable=false,baseY=0,surfaceHeight=null) {
+  staticColliders.push({
+    shape:'box',x,z,w:w+pad,d:d+pad,h,baseY,
+    passable,walkableTop,jumpable,surfaceHeight
+  });
 }
 
-function orientedCollider(x,z,w,d,h,rot=0,pad=.08,passable=null,walkableTop=false){
+function orientedCollider(x,z,w,d,h,rot=0,pad=.08,passable=null,walkableTop=false,jumpable=false,baseY=0,surfaceHeight=null){
   const quarter=Math.abs(Math.sin(rot))>.5;
   staticColliders.push({
     shape:'box',
@@ -167,13 +170,19 @@ function orientedCollider(x,z,w,d,h,rot=0,pad=.08,passable=null,walkableTop=fals
     w:(quarter?d:w)+pad,
     d:(quarter?w:d)+pad,
     h,
+    baseY,
     passable,
-    walkableTop
+    walkableTop,
+    jumpable,
+    surfaceHeight
   });
 }
 
-function circleCollider(x,z,r,h=32,passable=null) {
-  staticColliders.push({shape:'circle',x,z,radius:r,h,passable});
+function circleCollider(x,z,r,h=32,passable=null,walkableTop=false,jumpable=false,baseY=0,surfaceHeight=null) {
+  staticColliders.push({
+    shape:'circle',x,z,radius:r,h,baseY,
+    passable,walkableTop,jumpable,surfaceHeight
+  });
 }
 
 function addWalkableSurface(x,z,w,d,height,heightAt=null,contains=null){
@@ -194,17 +203,24 @@ function groundHeightAt(x,z){
   return height;
 }
 
+const playerBodyHeight=1.9;
+const jumpClearance=.10;
+
 function isBlocked(x,z,r=.55,feetY=0,airborne=false) {
   if (x < -176 || x > 176 || z < -176 || z > 176) return true;
-  for (const c of staticColliders) {
+  const bodyBottom=feetY;
+  const bodyTop=feetY+playerBodyHeight;
+
+  for(const c of staticColliders){
     if(c.passable && c.passable(x,z)) continue;
 
-    // While airborne, low cover can be jumped. Tall building volumes still block.
-    if(airborne && Number.isFinite(c.h) && c.h < feetY - .18) continue;
+    const baseY=Number.isFinite(c.baseY) ? c.baseY : 0;
+    const topY=baseY+(Number.isFinite(c.h)?c.h:32);
+    if(bodyTop <= baseY+.02 || bodyBottom >= topY-.02) continue;
+    if(airborne && c.jumpable && bodyBottom >= topY-jumpClearance) continue;
 
     if(c.shape==='circle'){
-      const dx=x-c.x;
-      const dz=z-c.z;
+      const dx=x-c.x,dz=z-c.z;
       if(dx*dx+dz*dz < (c.radius+r)*(c.radius+r)) return true;
     }else if(Math.abs(x-c.x) < c.w*.5+r && Math.abs(z-c.z) < c.d*.5+r){
       return true;
@@ -217,11 +233,15 @@ function topSurfaceAt(x,z){
   let top=0;
   for(const c of staticColliders){
     if(!c.walkableTop) continue;
+    const surface=Number.isFinite(c.surfaceHeight)
+      ? c.surfaceHeight
+      : (Number.isFinite(c.baseY)?c.baseY:0)+(Number.isFinite(c.h)?c.h:32);
+
     if(c.shape==='circle'){
       const dx=x-c.x,dz=z-c.z;
-      if(dx*dx+dz*dz <= c.radius*c.radius) top=Math.max(top,c.h);
+      if(dx*dx+dz*dz <= c.radius*c.radius) top=Math.max(top,surface);
     }else if(Math.abs(x-c.x)<=c.w*.5+playerRadius && Math.abs(z-c.z)<=c.d*.5+playerRadius){
-      top=Math.max(top,c.h);
+      top=Math.max(top,surface);
     }
   }
   return top;
@@ -230,6 +250,53 @@ function topSurfaceAt(x,z){
 function canTraverseTo(x,z,fromGround,feetY=0,airborne=false){
   if(isBlocked(x,z,playerRadius,feetY,airborne)) return false;
   return Math.abs(groundHeightAt(x,z)-fromGround)<=terrainStepHeight;
+}
+
+function resolvePlayerPenetration(){
+  for(let pass=0;pass<4;pass++){
+    let moved=false;
+    const feetY=player.position.y;
+    const bodyTop=feetY+playerBodyHeight;
+
+    for(const c of staticColliders){
+      if(c.passable && c.passable(player.position.x,player.position.z)) continue;
+      const surface=Number.isFinite(c.surfaceHeight)
+        ? c.surfaceHeight
+        : (Number.isFinite(c.baseY)?c.baseY:0)+(Number.isFinite(c.h)?c.h:32);
+
+      if(c.walkableTop && feetY>=surface-.08) continue;
+
+      const baseY=Number.isFinite(c.baseY) ? c.baseY : 0;
+      const topY=baseY+(Number.isFinite(c.h)?c.h:32);
+      if(bodyTop <= baseY+.02 || feetY >= topY-.02) continue;
+
+      if(c.shape==='circle'){
+        const dx=player.position.x-c.x,dz=player.position.z-c.z;
+        const minDist=c.radius+playerRadius;
+        const distSq=dx*dx+dz*dz;
+        if(distSq<minDist*minDist){
+          const dist=Math.sqrt(distSq);
+          if(dist<.0001) player.position.x+=minDist+.012;
+          else{
+            const push=(minDist-dist)+.012;
+            player.position.x+=(dx/dist)*push;
+            player.position.z+=(dz/dist)*push;
+          }
+          moved=true;
+        }
+      }else{
+        const dx=player.position.x-c.x,dz=player.position.z-c.z;
+        const overlapX=(c.w*.5+playerRadius)-Math.abs(dx);
+        const overlapZ=(c.d*.5+playerRadius)-Math.abs(dz);
+        if(overlapX>0 && overlapZ>0){
+          if(overlapX<overlapZ) player.position.x+=(dx>=0?1:-1)*(overlapX+.012);
+          else player.position.z+=(dz>=0?1:-1)*(overlapZ+.012);
+          moved=true;
+        }
+      }
+    }
+    if(!moved) break;
+  }
 }
 
 function addRoad(x,z,w,d) {
@@ -365,13 +432,19 @@ function addBuilding(x,z,w,d,h,mat){
   const frontZ=d/2+.035;
   const backZ=-d/2-.035;
 
-  // Roof silhouette varies by building instead of cloning the same cube.
+  // Gable roof: two correctly-sized halves meet at a real center ridge.
   const styleIndex=Math.abs(Math.round(x*.13+z*.07))%3;
   if(styleIndex===1){
-    const roofA=box(w+.55,.34,d*.72,0,h+.22,-d*.17,MAT.roof,g);
-    const roofB=box(w+.55,.34,d*.72,0,h+.22,d*.17,MAT.roof,g);
-    roofA.rotation.x=-.30;
-    roofB.rotation.x=.30;
+    const roofRun=(d*.5)+.34;
+    const rise=THREE.MathUtils.clamp(d*.11,.95,1.75);
+    const roofAngle=Math.atan2(rise,roofRun);
+    const roofSlopeLength=Math.hypot(roofRun,rise);
+    const roofY=h+(rise*.5)+.05;
+    const roofA=box(w+.62,.30,roofSlopeLength,0,roofY,roofRun*.5,MAT.roof,g);
+    const roofB=box(w+.62,.30,roofSlopeLength,0,roofY,-roofRun*.5,MAT.roof,g);
+    roofA.rotation.x=roofAngle;
+    roofB.rotation.x=-roofAngle;
+    box(w+.70,.16,.24,0,h+rise+.06,0,MAT.roof,g);
   }else if(styleIndex===2){
     box(w+.5,.46,d+.5,0,h+.23,0,MAT.roof,g);
     box(Math.min(4.8,w*.42),.18,.9,0,h+.58,frontZ-.35,MAT.wood,g);
@@ -513,7 +586,7 @@ function addLowWall(x,z,w,d,h=.95,rot=0,mat=MAT.stone){
   g.rotation.y=rot;
   world.add(g);
   box(w,h,d,0,0,0,mat,g);
-  collider(x,z,w,d,.08,h,null,true);
+  collider(x,z,w,d,.08,h,null,false,true);
   return g;
 }
 
@@ -526,7 +599,7 @@ function addPlanterCover(x,z,r=.95,h=1.0){
   planter.castShadow=true;
   planter.receiveShadow=true;
   world.add(planter);
-  collider(x,z,r*2.05,r*2.05,.08,h,null,true);
+  collider(x,z,r*2.05,r*2.05,.08,h,null,false,true);
   return planter;
 }
 
@@ -549,10 +622,10 @@ function addParkBench(x,z,rot=0){
   const c=Math.cos(rot),s=Math.sin(rot);
   const toWorld=(lx,lz)=>[x+lx*c-lz*s,z+lx*s+lz*c];
   const [seatX,seatZ]=toWorld(0,0);
-  orientedCollider(seatX,seatZ,4.5,.92,.82,rot,.05,null,true);
+  orientedCollider(seatX,seatZ,4.5,.92,.04,rot,.05,null,true,false,.64,.64);
   const [backX,backZ]=toWorld(0,-.35);
-  orientedCollider(backX,backZ,3.75,.18,.92,rot,.05);
-  addWalkableSurface(x,z,4.5,.92,.54,null,(px,pz)=>{
+  orientedCollider(backX,backZ,3.75,.18,.92,rot,.05,null,false,true);
+  addWalkableSurface(x,z,4.5,.92,.64,null,(px,pz)=>{
     const lx=(px-x)*c+(pz-z)*s;
     const lz=-(px-x)*s+(pz-z)*c;
     return Math.abs(lx)<=2.25 && Math.abs(lz)<=.46;
@@ -573,7 +646,7 @@ function addHedgeCluster(x,z,sx=2.6,sz=1.4){
     bush.receiveShadow=true;
     g.add(bush);
   }
-  // Dense foliage obscures sight but is not a hard projectile wall.
+  circleCollider(x,z,Math.max(sx,sz)*.48,1.72,null,false,true);
   return g;
 }
 
@@ -607,9 +680,9 @@ function addParkPavilion(x,z,rot=0){
   box(5.55,1.55,.20,0,.775,1.98,stone,g);
   box(.20,1.25,3.55,-2.68,.625,0,stone,g);
   const [bx,bz]=toWorld(0,1.98);
-  orientedCollider(bx,bz,5.55,.20,1.55,rot,.05);
+  orientedCollider(bx,bz,5.55,.20,1.55,rot,.05,null,false,true);
   const [sx,sz]=toWorld(-2.68,0);
-  orientedCollider(sx,sz,.20,3.55,1.25,rot,.05,null,true);
+  orientedCollider(sx,sz,.20,3.55,1.25,rot,.05,null,false,true);
 }
 function addParkKiosk(x,z,rot=0){
   const g=new THREE.Group();
@@ -654,7 +727,7 @@ function addParkBin(x,z){
   bin.position.set(x,.4,z);
   bin.castShadow=true;
   world.add(bin);
-  collider(x,z,.68,.68,.05,.8);
+  collider(x,z,.68,.68,.05,.8,null,false,true);
 }
 
 function addParkTreeLine(points,s=.88){
@@ -686,7 +759,7 @@ function addPlayground(x,z,rot=0){
     const m=box(w,h,th,px,h/2,pz,MAT.wood,g);
     const c=Math.cos(rot),s=Math.sin(rot);
     const wx=x+px*c-pz*s,wz=z+px*s+pz*c;
-    orientedCollider(wx,wz,w,th,h,rot,.05,null,true);
+    orientedCollider(wx,wz,w,th,h,rot,.05,null,false,true);
   });
 
   // Sandbox with a thick wooden rim.
@@ -731,6 +804,12 @@ function addPlayground(x,z,rot=0){
   // Slide platform, ladder, rails, and a sloped slide.
   box(2.6,.24,2.4,-3.8,2.0,-2.8,MAT.wood,g);
   box(2.4,.18,1.7,-3.8,1.0,-1.8,MAT.metal,g);
+  {
+    const c=Math.cos(rot),s=Math.sin(rot);
+    const px=x+(-3.8)*c-(-2.8)*s;
+    const pz=z+(-3.8)*s+(-2.8)*c;
+    orientedCollider(px,pz,2.6,2.4,.24,rot,.05,null,true,false,1.88,2.12);
+  }
   const slide=box(1.9,.16,5.2,-3.8,.95,-4.2,MAT.wood,g);
   slide.rotation.x=.38;
   const railL=box(.12,1.0,5.2,-4.9,1.35,-4.2,MAT.metal,g);
@@ -747,11 +826,19 @@ function addPlayground(x,z,rot=0){
   box(.18,1.45,3.5,treeX-2.02,1.84,treeZ,MAT.wood,g);
   box(.18,1.45,3.5,treeX+2.02,1.84,treeZ,MAT.wood,g);
   box(4.8,.24,4.0,treeX,2.82,treeZ,MAT.roof,g);
-  orientedCollider(
-    x+treeX*Math.cos(rot)-treeZ*Math.sin(rot),
-    z+treeX*Math.sin(rot)+treeZ*Math.cos(rot),
-    4.6,3.8,.32,rot,.05
-  );
+  {
+    const c=Math.cos(rot),s=Math.sin(rot);
+    const wp=(lx,lz)=>[x+lx*c-lz*s,z+lx*s+lz*c];
+    const [deckX,deckZ]=wp(treeX,treeZ);
+    const [backX,backZ]=wp(treeX,treeZ-1.75);
+    const [leftX,leftZ]=wp(treeX-2.02,treeZ);
+    const [rightX,rightZ]=wp(treeX+2.02,treeZ);
+    orientedCollider(deckX,deckZ,4.6,3.8,.32,rot,.05,null,true,false,.96,1.28);
+    orientedCollider(backX,backZ,4.2,.18,1.65,rot,.05,null,false,false,1.125);
+    orientedCollider(leftX,leftZ,.18,3.5,1.45,rot,.05,null,false,false,1.115);
+    orientedCollider(rightX,rightZ,.18,3.5,1.45,rot,.05,null,false,false,1.115);
+    orientedCollider(deckX,deckZ,4.8,4.0,.24,rot,.05,null,false,false,2.70);
+  }
   addWalkableSurface(
     x+treeX*Math.cos(rot)-treeZ*Math.sin(rot),
     z+treeX*Math.sin(rot)+treeZ*Math.cos(rot),
@@ -761,6 +848,62 @@ function addPlayground(x,z,rot=0){
   // Perimeter posts of the play structure are combat obstacles, but the low fence remains jumpable.
 }
 
+
+function addParkWagon(x,z,rot=0){
+  const g=new THREE.Group();
+  g.position.set(x,.02,z);
+  g.rotation.y=rot;
+  world.add(g);
+  box(2.9,.16,1.55,0,.72,0,MAT.wood,g);
+  box(2.7,.72,.14,0,1.08,-.70,MAT.wood,g);
+  box(.14,.72,1.42,-1.36,1.08,0,MAT.wood,g);
+  box(.14,.72,1.42,1.36,1.08,0,MAT.wood,g);
+  for(const wx of [-1.08,1.08]) for(const wz of [-.78,.78]){
+    const wheel=new THREE.Mesh(new THREE.CylinderGeometry(.42,.42,.16,18),MAT.wood);
+    wheel.rotation.z=Math.PI/2;
+    wheel.position.set(wx,.43,wz);
+    wheel.castShadow=true;
+    wheel.receiveShadow=true;
+    g.add(wheel);
+  }
+  const handle=new THREE.Mesh(new THREE.CylinderGeometry(.08,.08,2.1,10),MAT.metal);
+  handle.rotation.z=Math.PI/2;
+  handle.position.set(0,.82,1.45);
+  handle.castShadow=true;
+  g.add(handle);
+  collider(x,z,2.95,1.65,.08,1.35,null,false,true,.05,1.40);
+  return g;
+}
+
+function addCarouselRide(x,z,rot=0){
+  const g=new THREE.Group();
+  g.position.set(x,.02,z);
+  g.rotation.y=rot;
+  world.add(g);
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(4.4,4.7,.22,32),MAT.stone);
+  base.position.y=.11; base.castShadow=true; base.receiveShadow=true; g.add(base);
+  const platform=new THREE.Mesh(new THREE.CylinderGeometry(4.05,4.05,.12,32),MAT.wood);
+  platform.position.y=.29; platform.castShadow=true; platform.receiveShadow=true; g.add(platform);
+  const pole=new THREE.Mesh(new THREE.CylinderGeometry(.18,.24,2.8,16),MAT.metal);
+  pole.position.y=1.52; pole.castShadow=true; g.add(pole);
+  const roof=new THREE.Mesh(new THREE.ConeGeometry(4.15,1.25,24),MAT.roof);
+  roof.position.y=3.45; roof.castShadow=true; g.add(roof);
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(3.25,.08,8,48),MAT.metal);
+  ring.rotation.x=Math.PI/2; ring.position.y=1.95; g.add(ring);
+  for(let i=0;i<6;i++){
+    const a=i*Math.PI/3;
+    const seat=new THREE.Mesh(new THREE.BoxGeometry(1.1,.22,.72),MAT.wood);
+    seat.position.set(Math.cos(a)*2.75,1.08,Math.sin(a)*2.75);
+    seat.rotation.y=-a; seat.castShadow=true; seat.receiveShadow=true; g.add(seat);
+    const rod=new THREE.Mesh(new THREE.CylinderGeometry(.035,.035,.95,8),MAT.metal);
+    rod.position.set(Math.cos(a)*2.75,1.48,Math.sin(a)*2.75);
+    rod.castShadow=true; g.add(rod);
+  }
+  collider(x,z,8.5,8.5,.1,.30,null,false,true,.02,.32);
+  circleCollider(x,z,.55,2.8);
+  g.userData.rotationSpeed=.18;
+  return g;
+}
 
 function addCentralFountain(){
   const g=new THREE.Group();
@@ -1283,7 +1426,7 @@ function addCentralFountain(){
 
   // Only the central structural pedestal blocks the player. Water, particles
   // and the basin itself do not become combat-blocking collision geometry.
-  circleCollider(0,0,1.58,3.0,null,true);
+  circleCollider(0,0,1.58,3.0,null,false,false);
 
   const light=new THREE.PointLight(0x76eaff,2.1,13,2);
   light.position.set(0,2.25,0);
@@ -1594,6 +1737,9 @@ function buildMap(){
   // Central landmark stays exactly where the whole layout can orient around it.
   addCentralFountain();
 
+  world.userData.carouselRide=addCarouselRide(0,-31,Math.PI/12);
+  addParkWagon(58,-24,-Math.PI/2);
+
 }
 buildMap();
 
@@ -1619,9 +1765,9 @@ async function addStreetAssets(){
   if(!template) return;
 
   const points=[
-    [-76,-72],[-24,-76],[24,-76],[76,-72],
-    [-76,72],[-24,76],[24,76],[76,72],
-    [-76,-24],[-76,24],[76,-24],[76,24],
+    [-78,-72],[-24,-78],[24,-78],[78,-72],
+    [-78,72],[-24,78],[24,78],[78,72],
+    [-78,-24],[-78,24],[78,-24],[78,24],
     [-132,-108],[-132,108],[132,-108],[132,108]
   ];
 
@@ -2119,6 +2265,7 @@ function updatePlayer(dt,time){
         player.position.y=landingY;
         verticalVelocity=0;
         grounded=true;
+        resolvePlayerPenetration();
       }else{
         player.position.y=nextY;
         grounded=false;
@@ -2133,6 +2280,9 @@ function updatePlayer(dt,time){
   spawnRing.material.opacity=.72*(1-ease);
 
   if(mixer) mixer.update(dt);
+
+  const carousel=world.userData.carouselRide;
+  if(carousel) carousel.rotation.y += dt*carousel.userData.rotationSpeed;
 
   const fountain=world.userData.fountain;
   if(fountain){
@@ -2167,14 +2317,16 @@ function getCameraClearDistance(target,desired){
   for(const c of staticColliders){
     const halfW=c.shape==='circle' ? c.radius : c.w*.5;
     const halfD=c.shape==='circle' ? c.radius : c.d*.5;
+    const baseY=Number.isFinite(c.baseY) ? c.baseY : 0;
+    const topY=baseY+(Number.isFinite(c.h)?c.h:32);
     cameraBox.min.set(
       c.x-halfW-cameraCollisionRadius,
-      -cameraCollisionRadius,
+      baseY-cameraCollisionRadius,
       c.z-halfD-cameraCollisionRadius
     );
     cameraBox.max.set(
       c.x+halfW+cameraCollisionRadius,
-      (Number.isFinite(c.h)?c.h:32)+cameraCollisionRadius,
+      topY+cameraCollisionRadius,
       c.z+halfD+cameraCollisionRadius
     );
 

@@ -2,18 +2,26 @@
 // silently stuck at "Preparing scene…".
 let THREE = null;
 let GLTFLoader = null;
+let OBJLoader = null;
+let MTLLoader = null;
 const engineSources = [
   {
     three: 'https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js',
-    loader: 'https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/loaders/GLTFLoader.js'
+    loader: 'https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/loaders/GLTFLoader.js',
+    objLoader: 'https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/loaders/OBJLoader.js',
+    mtlLoader: 'https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/loaders/MTLLoader.js'
   },
   {
     three: 'https://unpkg.com/three@0.186.0/build/three.module.js',
-    loader: 'https://unpkg.com/three@0.186.0/examples/jsm/loaders/GLTFLoader.js?module'
+    loader: 'https://unpkg.com/three@0.186.0/examples/jsm/loaders/GLTFLoader.js?module',
+    objLoader: 'https://unpkg.com/three@0.186.0/examples/jsm/loaders/OBJLoader.js?module',
+    mtlLoader: 'https://unpkg.com/three@0.186.0/examples/jsm/loaders/MTLLoader.js?module'
   },
   {
     three: 'https://esm.sh/three@0.186.0?bundle',
-    loader: 'https://esm.sh/three@0.186.0/examples/jsm/loaders/GLTFLoader.js?bundle'
+    loader: 'https://esm.sh/three@0.186.0/examples/jsm/loaders/GLTFLoader.js?bundle',
+    objLoader: 'https://esm.sh/three@0.186.0/examples/jsm/loaders/OBJLoader.js?bundle',
+    mtlLoader: 'https://esm.sh/three@0.186.0/examples/jsm/loaders/MTLLoader.js?bundle'
   }
 ];
 
@@ -28,6 +36,18 @@ for (const source of engineSources) {
     try {
       const loaderModule = await import(source.loader);
       GLTFLoader = loaderModule.GLTFLoader || null;
+      try{
+        const objModule = await import(source.objLoader);
+        OBJLoader = objModule.OBJLoader || null;
+      }catch(objError){
+        console.warn('Optional OBJLoader source failed:', source.objLoader, objError);
+      }
+      try{
+        const mtlModule = await import(source.mtlLoader);
+        MTLLoader = mtlModule.MTLLoader || null;
+      }catch(mtlError){
+        console.warn('Optional MTLLoader source failed:', source.mtlLoader, mtlError);
+      }
     } catch (loaderError) {
       console.warn('Optional GLTFLoader source failed:', source.loader, loaderError);
     }
@@ -1868,7 +1888,8 @@ let upperMixer=null;
 let actions={};
 let currentAction=null;
 let characterReady=false;
-
+let protoframePreviewActive=false;
+let protoframePreviewRoot=null;
 
 let weaponRoot=null;
 let muzzleFlash=null;
@@ -2429,6 +2450,56 @@ function updateUpperBodyWeaponTemplate(dt,moving,sprint){
   }
 }
 
+async function loadProtoframePreview(){
+  if(!OBJLoader) return null;
+
+  try{
+    const objLoader=new OBJLoader();
+    if(MTLLoader){
+      try{
+        const mtlLoader=new MTLLoader();
+        const materials=await mtlLoader.loadAsync(
+          'assets/player/Warframe1999_Protoframe_LowPoly_v2.mtl'
+        );
+        materials.preload();
+        objLoader.setMaterials(materials);
+      }catch(err){
+        console.warn('Protoframe MTL preview failed; using fallback material:',err);
+      }
+    }
+
+    const root=await objLoader.loadAsync(
+      'assets/player/Warframe1999_Protoframe_LowPoly_v2.obj'
+    );
+
+    root.traverse(o=>{
+      if(!o.isMesh) return;
+      o.castShadow=true;
+      o.receiveShadow=true;
+      if(o.material){
+        o.material.side=THREE.FrontSide;
+        o.material.roughness=.42;
+        o.material.metalness=.52;
+      }
+    });
+
+    const box=new THREE.Box3().setFromObject(root);
+    const size=box.getSize(new THREE.Vector3());
+    const desiredHeight=1.95;
+    const scale=desiredHeight/Math.max(size.y,.001);
+    root.scale.setScalar(scale);
+
+    const scaledBox=new THREE.Box3().setFromObject(root);
+    root.position.y=-scaledBox.min.y;
+
+    root.name='Warframe1999_Protoframe_LowPoly_Preview';
+    return root;
+  }catch(err){
+    console.warn('Protoframe preview failed:',err);
+    return null;
+  }
+}
+
 async function loadCharacter(){
   const loading=document.getElementById('loading');
   if(!loader){
@@ -2486,7 +2557,22 @@ async function loadCharacter(){
 
     player.add(characterRoot);
     characterRoot.updateMatrixWorld(true);
+
+    // A/B visual test: keep the original gameplay skeleton for movement,
+    // terrain, jump and the existing animation infrastructure, but replace
+    // its rendered body with the new Protoframe low-poly preview.
+    protoframePreviewRoot=await loadProtoframePreview();
+    if(protoframePreviewRoot){
+      characterRoot.traverse(o=>{
+        if(o.isMesh) o.visible=false;
+      });
+      characterRoot.add(protoframePreviewRoot);
+      protoframePreviewActive=true;
+      console.log('Protoframe visual preview active.');
+    }
+
     makeWeapon();
+    if(protoframePreviewActive&&weaponRoot) weaponRoot.visible=false;
 
     mixer=new THREE.AnimationMixer(characterRoot);
     upperMixer=new THREE.AnimationMixer(characterRoot);
@@ -2544,7 +2630,9 @@ async function loadCharacter(){
     __CDDA_refreshWeaponRig();
     __CDDA_captureCombatNeutralPose();
     characterReady=true;
-    loading.textContent='Replacement character ready.';
+    loading.textContent=protoframePreviewActive
+      ? 'Protoframe visual preview ready.'
+      : 'Replacement character ready.';
     console.log('Replacement character loaded:',{
       clipCount:(gltf.animations||[]).length,
       gunActions:Object.fromEntries(Object.entries(gunActions).map(([k,v])=>[k,v?.getClip().name||null])),

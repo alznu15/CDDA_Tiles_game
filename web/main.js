@@ -2004,7 +2004,8 @@ function makeWeapon(){
 
   weaponSockets.leftGrip=new THREE.Object3D();
   weaponSockets.leftGrip.name='LeftGrip';
-  // Forward support hand belongs on the physical foregrip.\n  weaponSockets.leftGrip.position.set(0,-.17,.02);
+  // Forward support hand belongs on the physical foregrip.
+  weaponSockets.leftGrip.position.set(0,-.17,.02);
   weaponSockets.leftGrip.userData.role='support_hand';
   weaponRoot.add(weaponSockets.leftGrip);
 
@@ -2814,7 +2815,8 @@ function updatePlayer(dt,time){
   const moving=move.lengthSq()>1e-5;
   if(moving) move.normalize();
 
-  // Hip-fire is compatible with sprint. ADS is the only state that blocks sprint.\n  const sprint=input.shift && !input.aim;
+  // Hip-fire is compatible with sprint. ADS is the only state that blocks sprint.
+  const sprint=input.shift && !input.aim;
   const speed=input.aim ? (sprint?8.2:4.9) : (sprint?10.5:6.2);
 
   // Restore the original movement model:

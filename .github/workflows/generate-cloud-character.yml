@@ -1,4 +1,4 @@
-name: Generate cloud character GLB
+name: Acquire cloud character GLB
 
 on:
   push:
@@ -10,11 +10,15 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: cloud-character
+  cancel-in-progress: true
+
 jobs:
-  forge-character:
+  acquire-character:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -22,72 +26,90 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Generate rigged character through three.ws
+      - name: Find a rigged sci-fi character through three.ws catalog API
         shell: bash
         run: |
           set -euo pipefail
 
-          PROMPT="$(cat .github/cloud-character.prompt)"
-          REQUEST="$(jq -n --arg prompt "$PROMPT" '{
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/call",
-            params: {
-              name: "forge_avatar",
-              arguments: { prompt: $prompt }
-            }
-          }')"
+          echo "Querying three.ws public character catalog..."
+          curl -fsS --retry 5 --retry-all-errors --retry-delay 3 \
+            "https://three.ws/api/catalog?q=sci+fi+soldier&kind=character&limit=30" \
+            -o /tmp/catalog.json
 
-          GLB_URL=""
-          for attempt in 1 2 3; do
-            echo "Calling three.ws rigged-avatar API (attempt $attempt/3)..."
-            curl -fsS --retry 3 --retry-all-errors --retry-delay 4 \
-              -X POST "https://three.ws/api/mcp-studio" \
-              -H "content-type: application/json" \
-              --data "$REQUEST" \
-              -o /tmp/threews-response.json
+          echo "Catalog response:"
+          cat /tmp/catalog.json
 
-            echo "three.ws response:"
-            cat /tmp/threews-response.json
+          MODEL_URL="$(jq -r '
+            .items[]
+            | select(
+                (
+                  ((.title // "") + " " + ((.tags // []) | join(" ")))
+                  | test("sci|soldier|tactical|military|space|combat"; "i")
+                )
+              )
+            | .url
+          ' /tmp/catalog.json | grep -E '^https://.*(glb)([?#].*)?$' | head -n 1 || true)"
 
-            GLB_URL="$(jq -r '
-              .. | objects |
-              (.riggedGlbUrl // .glbUrl // empty)
-            ' /tmp/threews-response.json | grep -E '^https://.*\\.glb([?#].*)?$' | head -n 1 || true)"
+          if [ -z "$MODEL_URL" ]; then
+            MODEL_URL="$(jq -r '.items[]?.url // empty' /tmp/catalog.json | grep -E '^https://.*(glb)([?#].*)?$' | head -n 1 || true)"
+          fi
 
-            if [ -z "$GLB_URL" ]; then
-              GLB_URL="$(grep -oE 'https://[^"[:space:]]+\\.glb([^"[:space:]]*)?' /tmp/threews-response.json | head -n 1 || true)"
-            fi
-
-            if [ -n "$GLB_URL" ]; then
-              break
-            fi
-
-            echo "No GLB returned on attempt $attempt."
-            sleep $((attempt * 5))
-          done
-
-          if [ -z "$GLB_URL" ]; then
-            echo "three.ws did not return a rigged GLB after 3 attempts."
+          if [ -z "$MODEL_URL" ]; then
+            echo "No usable GLB URL found in the public character catalog."
             exit 1
           fi
 
+          echo "Selected model: $MODEL_URL"
+
+          MODEL_ID="$(jq -r '
+            .items[]
+            | select(.url == $URL)
+            | .id
+          ' --arg URL "$MODEL_URL" /tmp/catalog.json | head -n 1 || true)"
+
+          MODEL_TITLE="$(jq -r '
+            .items[]
+            | select(.url == $URL)
+            | .title
+          ' --arg URL "$MODEL_URL" /tmp/catalog.json | head -n 1 || true)"
+
+          MODEL_LICENSE="$(jq -r '
+            .items[]
+            | select(.url == $URL)
+            | .license
+          ' --arg URL "$MODEL_URL" /tmp/catalog.json | head -n 1 || true)"
+
           mkdir -p web/assets/player
-          echo "Downloading $GLB_URL"
-          curl -fL --retry 5 --retry-all-errors --retry-delay 4 \
-            "$GLB_URL" \
+
+          curl -fL --retry 5 --retry-all-errors --retry-delay 3 \
+            "$MODEL_URL" \
             -o web/assets/player/CDDA_SciFi_Soldier_Generated.glb
 
           test -s web/assets/player/CDDA_SciFi_Soldier_Generated.glb
+
           SIZE_BYTES="$(wc -c < web/assets/player/CDDA_SciFi_Soldier_Generated.glb)"
-          echo "Generated GLB size: $SIZE_BYTES bytes"
+          echo "Selected GLB size: $SIZE_BYTES bytes"
 
           if [ "$SIZE_BYTES" -lt 100000 ]; then
-            echo "Generated GLB is implausibly small; refusing to commit it."
+            echo "Selected GLB is implausibly small; refusing to commit it."
             exit 1
           fi
 
-      - name: Commit generated asset back to GitHub
+          jq -n \
+            --arg source "three.ws public character catalog" \
+            --arg id "$MODEL_ID" \
+            --arg title "$MODEL_TITLE" \
+            --arg license "$MODEL_LICENSE" \
+            --arg url "$MODEL_URL" \
+            '{
+              source: $source,
+              id: $id,
+              title: $title,
+              license: $license,
+              sourceUrl: $url
+            }' > web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json
+
+      - name: Commit character asset
         shell: bash
         run: |
           set -euo pipefail
@@ -96,11 +118,12 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add web/assets/player/CDDA_SciFi_Soldier_Generated.glb
+          git add web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json
 
           if git diff --cached --quiet; then
-            echo "Generated asset is unchanged; nothing to commit."
+            echo "Character asset is unchanged; nothing to commit."
             exit 0
           fi
 
-          git commit -m "chore(character): add cloud-generated sci-fi soldier"
+          git commit -m "chore(character): add cloud-acquired rigged sci-fi GLB"
           git push

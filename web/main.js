@@ -2566,6 +2566,7 @@ async function loadCharacter(){
       characterRoot.traverse(o=>{
         if(o.isMesh) o.visible=false;
       });
+      protoframePreviewRoot.scale.multiplyScalar(1/Math.max(characterBaseScale,.0001));
       characterRoot.add(protoframePreviewRoot);
       protoframePreviewActive=true;
       console.log('Protoframe visual preview active.');

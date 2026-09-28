@@ -2108,12 +2108,27 @@ async function loadCharacter(){
   try{
     loading.textContent='Loading replacement character…';
 
-    // New character: Quaternius humanoid + Universal Animation Library.
-    // The old Character_Soldier asset is gone from the player pipeline, so its
-    // embedded firearm meshes can no longer fight the custom weapon system.
-    const gltf=await loader.loadAsync(
+    // Cloud-generated character is the primary asset. The external humanoid
+    // remains a safety fallback so a missing/unfinished cloud commit never
+    // blanks the scene.
+    const characterSources=[
+      'assets/player/CDDA_SciFi_Soldier_Generated.glb',
       'https://raw.githubusercontent.com/NafisRayan/Animate-Rigged-Humanoid-No-Blender/main/test/human_male.glb'
-    );
+    ];
+    let gltf=null;
+    let lastCharacterError=null;
+    for(const src of characterSources){
+      try{
+        gltf=await loader.loadAsync(src);
+        if(src.startsWith('assets/')) console.log('Using cloud-generated character:',src);
+        else console.warn('Cloud-generated character unavailable; using fallback:',src);
+        break;
+      }catch(err){
+        lastCharacterError=err;
+        console.warn('Character source failed:',src,err);
+      }
+    }
+    if(!gltf) throw lastCharacterError||new Error('No character source could be loaded');
 
     characterRoot=gltf.scene;
     hideBuiltInWeapons(characterRoot);

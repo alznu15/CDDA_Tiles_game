@@ -2302,10 +2302,23 @@ function addTechSuit(){
 
 function applyCharacterRig(){
   if(!characterReady||!characterRoot) return;
+
   captureRigAnimationBase();
+
   if(input.aim){
     applyAimIK(aimWeight);
     applyFingerGrip(aimWeight);
+
+    // Wrist alignment is applied after the two-bone solver so both hands
+    // inherit the weapon's authored grip orientation without rotating the torso.
+    const weaponWorldQ=new THREE.Quaternion();
+    weaponRoot.getWorldQuaternion(weaponWorldQ);
+
+    const rightHand=rigBones.handr;
+    const leftHand=rigBones.handl;
+
+    if(rightHand) applyBoneWorldQuaternion(rightHand,weaponWorldQ);
+    if(leftHand) applyBoneWorldQuaternion(leftHand,weaponWorldQ);
   }
 }
 function pointInsideCollider(c,x,z,extra=.0){
@@ -2926,13 +2939,23 @@ function updatePlayer(dt,time){
       const nx=player.position.x+step.x;
       const nz=player.position.z+step.z;
 
-      let movedNormally=false;
+      const startX=player.position.x;
+      const startZ=player.position.z;
 
-      if(canTraverseTo(nx,player.position.z,currentGround,player.position.y,!grounded)){
+      const xAttempt=Math.abs(step.x)>1e-5;
+      const zAttempt=Math.abs(step.z)>1e-5;
+
+      if(xAttempt && canTraverseTo(
+        nx,
+        player.position.z,
+        currentGround,
+        player.position.y,
+        !grounded
+      )){
         player.position.x=nx;
-        movedNormally=true;
       }
-      if(canTraverseTo(
+
+      if(zAttempt && canTraverseTo(
         player.position.x,
         nz,
         groundHeightAt(player.position.x,player.position.z),
@@ -2940,14 +2963,20 @@ function updatePlayer(dt,time){
         !grounded
       )){
         player.position.z=nz;
-        movedNormally=true;
       }
 
-      // A blocked forward movement into low jumpable cover becomes a contextual
-      // traversal instead of a dead stop.
-      if(!movedNormally && grounded){
+      const actualMoved=Math.hypot(
+        player.position.x-startX,
+        player.position.z-startZ
+      );
+
+      // A genuinely blocked movement vector into low jumpable cover becomes
+      // contextual traversal. A zero-length axis is not counted as movement.
+      if(actualMoved<Math.min(.02,speed*dt*.2) && grounded){
         const obstacle=findLowObstacle(move);
-        if(obstacle) beginLowObstacleTraversal(obstacle,move);
+        if(obstacle){
+          beginLowObstacleTraversal(obstacle,move);
+        }
       }
 
       if(!input.aim){

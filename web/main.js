@@ -1871,6 +1871,7 @@ let rigBones={};
 let weaponRoot=null;
 let muzzleFlash=null;
 let muzzlePoint=null;
+let weaponBasePosition=new THREE.Vector3();
 let weaponInitialized=false;
 let ammo=120;
 let lastShotTime=0;
@@ -2054,50 +2055,90 @@ function buildAnimationLibrary(gltf,extraData){
   };
 }
 
-function makeWeapon(){
-  if(weaponInitialized||!characterRoot) return;
+function makeWeapon(rifleData){
+  if(weaponInitialized||!characterRoot||!rifleData) return;
   weaponInitialized=true;
 
-  const metal=new THREE.MeshStandardMaterial({color:0x20272b,roughness:.36,metalness:.78});
-  const dark=new THREE.MeshStandardMaterial({color:0x11171b,roughness:.5,metalness:.34});
-  const accent=new THREE.MeshStandardMaterial({color:0x17333c,emissive:0x19d9ff,emissiveIntensity:1.4,roughness:.32,metalness:.45});
+  const materialFor=(id)=>{
+    const palettes={
+      2:new THREE.MeshStandardMaterial({color:0x465158,roughness:.38,metalness:.78}),
+      4:new THREE.MeshStandardMaterial({color:0x17333c,emissive:0x22d9ff,emissiveIntensity:2.0,roughness:.28,metalness:.36}),
+      6:new THREE.MeshStandardMaterial({color:0x11171b,roughness:.62,metalness:.38}),
+      8:new THREE.MeshStandardMaterial({color:0x71808a,roughness:.42,metalness:.68}),
+      10:new THREE.MeshStandardMaterial({color:0x20292f,roughness:.48,metalness:.58}),
+      13:new THREE.MeshBasicMaterial({color:0xffdf88,transparent:true,opacity:.76,depthWrite:false})
+    };
+    return palettes[id]||palettes[6];
+  };
 
-  weaponRoot=new THREE.Group();
+  const weaponModel=new THREE.Group();
+  weaponModel.name='Native Frontier Rifle Geometry';
+
+  for(const meshData of rifleData.meshes||[]){
+    for(const surface of meshData.surfaces||[]){
+      if(!surface.positions?.length||!surface.indices?.length) continue;
+
+      const geometry=new THREE.BufferGeometry();
+      geometry.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(surface.positions,3)
+      );
+      if(surface.normals?.length){
+        geometry.setAttribute(
+          'normal',
+          new THREE.Float32BufferAttribute(surface.normals,3)
+        );
+      }else{
+        geometry.computeVertexNormals();
+      }
+      if(surface.uvs?.length){
+        geometry.setAttribute(
+          'uv',
+          new THREE.Float32BufferAttribute(surface.uvs,2)
+        );
+      }
+      geometry.setIndex(surface.indices);
+      geometry.computeBoundingSphere();
+
+      const mesh=new THREE.Mesh(geometry,materialFor(surface.material));
+      mesh.castShadow=true;
+      mesh.receiveShadow=true;
+      weaponModel.add(mesh);
+    }
+  }
+
+  weaponRoot=weaponModel;
   weaponRoot.name='Frontier Rifle';
-
   const wrist=rigBones[normalizeBoneName('Wrist.R')];
   (wrist||player).add(weaponRoot);
 
-  weaponRoot.position.set(.08,-.06,.08);
+  // The source rifle is authored around the same hand-held coordinate system.
+  // Keep the local transform simple: the wrist animation supplies orientation.
+  weaponBasePosition.set(.08,-.055,.08);
+  weaponRoot.position.copy(weaponBasePosition);
   weaponRoot.rotation.set(0,0,0);
+  weaponRoot.scale.setScalar(1.0);
 
-  box(.36,.26,.74,0,0,0,metal,weaponRoot);
-  box(.22,.20,.88,0,.02,.62,dark,weaponRoot);
-  box(.12,.12,1.02,0,.02,1.56,metal,weaponRoot);
-  box(.16,.34,.28,0,-.19,-.46,dark,weaponRoot);
-  box(.16,.40,.27,0,-.18,.10,dark,weaponRoot);
-  box(.08,.08,.38,0,.12,.48,accent,weaponRoot);
-
-  const muzzle=new THREE.Mesh(new THREE.CylinderGeometry(.055,.055,.12,10),dark);
-  muzzle.rotation.x=Math.PI/2;
-  muzzle.position.set(0,.01,2.08);
-  weaponRoot.add(muzzle);
+  // The source asset exposes a FirePoint at approximately +Z. Use the native
+  // geometry convention and keep the firing point as a child of the rifle.
+  muzzlePoint=new THREE.Object3D();
+  muzzlePoint.position.set(0,.01,.80);
+  weaponRoot.add(muzzlePoint);
 
   muzzleFlash=new THREE.Mesh(
-    new THREE.ConeGeometry(.13,.38,8),
+    new THREE.ConeGeometry(.11,.30,8),
     new THREE.MeshBasicMaterial({
-      color:0xffe8a0,transparent:true,opacity:.92,
-      depthWrite:false,side:THREE.DoubleSide
+      color:0xffe8a0,
+      transparent:true,
+      opacity:.92,
+      depthWrite:false,
+      side:THREE.DoubleSide
     })
   );
   muzzleFlash.rotation.x=-Math.PI/2;
-  muzzleFlash.position.set(0,.01,2.30);
+  muzzleFlash.position.set(0,.01,.72);
   muzzleFlash.visible=false;
   weaponRoot.add(muzzleFlash);
-
-  muzzlePoint=new THREE.Object3D();
-  muzzlePoint.position.set(0,.01,2.42);
-  weaponRoot.add(muzzlePoint);
 
   const name=document.querySelector('.weaponName');
   const meta=document.querySelector('.weaponMeta');
@@ -2151,6 +2192,7 @@ function hideEmbeddedPistol(root){
 
 function updateWeaponState(dt){
   if(weaponRoot){
+    weaponRoot.position.copy(weaponBasePosition);
     weaponRoot.position.z-=recoilKick*.018;
   }
 
@@ -2194,10 +2236,14 @@ async function loadCharacter(){
   try{
     loading.textContent='Loading native sci-fi character rig…';
 
-    const [gltf,extraData]=await Promise.all([
+    const [gltf,extraData,rifleData]=await Promise.all([
       loader.loadAsync('./assets/player/Stealth_SciFi_Soldier.gltf'),
       fetch('./assets/player/Stealth_Rifle_Animations.json').then(r=>{
         if(!r.ok) throw new Error('Animation library HTTP '+r.status);
+        return r.json();
+      }),
+      fetch('./assets/player/Stealth_Rifle_Geometry.json').then(r=>{
+        if(!r.ok) throw new Error('Rifle geometry HTTP '+r.status);
         return r.json();
       })
     ]);
@@ -2232,7 +2278,7 @@ async function loadCharacter(){
 
     collectCharacterRig();
     buildAnimationLibrary(gltf,extraData);
-    makeWeapon();
+    makeWeapon(rifleData);
 
     setCharacterAction('Idle',0);
     characterReady=true;

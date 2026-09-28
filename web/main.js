@@ -379,9 +379,6 @@ function addBuilding(x,z,w,d,h,mat){
     box(w+.5,.46,d+.5,0,h+.23,0,MAT.roof,g);
   }
 
-  const facadePanelMat=styleIndex===0?MAT.wood:(styleIndex===1?MAT.brick:MAT.buildingA);
-  box(Math.min(w*.54,8.5),Math.min(2.1,h*.28),.08,0,Math.min(3.8,h*.44),frontZ-.055,facadePanelMat,g);
-
   const rows=Math.max(2,Math.floor(w/4.2));
   const windowRows=h>=10?2:1;
 
@@ -543,7 +540,7 @@ function addParkBench(x,z,rot=0){
   box(3.75,.92,.18,0,.58,-.35,MAT.wood,g);
   {
     const c=Math.cos(rot),s=Math.sin(rot);
-    const bx=x+(-.35)*s, bz=z+(-.35)*c;
+    const bx=x+0.35*s, bz=z-0.35*c;
     orientedCollider(bx,bz,3.75,.18,.92,rot,.06);
   }
   box(.16,.55,.64,-1.55,-.02,.16,MAT.stone,g);

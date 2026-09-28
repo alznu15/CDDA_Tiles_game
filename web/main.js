@@ -1872,6 +1872,7 @@ let characterReady=false;
 let weaponRoot=null;
 let muzzleFlash=null;
 let muzzlePoint=null;
+let weaponSockets={rightGrip:null,leftGrip:null,muzzle:null};
 let aimBones=null;
 let aimWeight=0;
 let recoilKick=0;
@@ -1995,9 +1996,24 @@ function makeWeapon(){
   muzzleFlash.visible=false;
   weaponRoot.add(muzzleFlash);
 
-  muzzlePoint=new THREE.Object3D();
-  muzzlePoint.position.set(0,.02,2.16);
-  weaponRoot.add(muzzlePoint);
+  weaponSockets.rightGrip=new THREE.Object3D();
+  weaponSockets.rightGrip.name='RightGrip';
+  weaponSockets.rightGrip.position.set(0,-.18,-.42);
+  weaponSockets.rightGrip.userData.role='trigger_hand';
+  weaponRoot.add(weaponSockets.rightGrip);
+
+  weaponSockets.leftGrip=new THREE.Object3D();
+  weaponSockets.leftGrip.name='LeftGrip';
+  weaponSockets.leftGrip.position.set(0,-.18,.70);
+  weaponSockets.leftGrip.userData.role='support_hand';
+  weaponRoot.add(weaponSockets.leftGrip);
+
+  weaponSockets.muzzle=new THREE.Object3D();
+  weaponSockets.muzzle.name='Muzzle';
+  weaponSockets.muzzle.position.set(0,.02,2.16);
+  weaponSockets.muzzle.userData.role='muzzle';
+  weaponRoot.add(weaponSockets.muzzle);
+  muzzlePoint=weaponSockets.muzzle;
 
   const name=document.querySelector('.weaponName');
   const meta=document.querySelector('.weaponMeta');
@@ -2018,7 +2034,12 @@ function getRoleForward(){
 }
 
 function getAimDirection(){
-  // Weapon and ballistics use character/player facing, never camera direction.
+  const direction=new THREE.Vector3();
+  if(input.aim||input.fire){
+    camera.getWorldDirection(direction);
+    if(direction.lengthSq()<1e-6) direction.copy(getRoleForward());
+    return direction.normalize();
+  }
   return getRoleForward();
 }
 
@@ -2102,12 +2123,8 @@ function beginWeaponHolster(){
   weaponTransition.target='holstered';
   weaponTransition.startedAt=performance.now();
   weaponTransition.duration=.68;
-  getWeaponHandWorldPose(weaponHandWorldPosition,weaponHandWorldQuaternion);
-  const localStart=weaponHandWorldPosition.clone();
-  player.worldToLocal(localStart);
-  weaponTransition.fromPosition.copy(localStart);
-  const playerInverse=player.getWorldQuaternion(new THREE.Quaternion()).invert();
-  weaponTransition.fromQuaternion.copy(playerInverse.multiply(weaponHandWorldQuaternion));
+  weaponTransition.fromPosition.copy(weaponRoot.position);
+  weaponTransition.fromQuaternion.copy(weaponRoot.quaternion);
   weaponState='holstering';
 }
 
@@ -2256,7 +2273,7 @@ function fireWeapon(){
   recoilYaw=(Math.random()-.5)*.045;
 
   const origin=camera.position.clone();
-  const direction=getRoleForward();
+  const direction=getAimDirection();
   const hit=raycastStatic(origin,direction,260);
   const muzzleWorld=muzzlePoint.getWorldPosition(new THREE.Vector3());
 
@@ -2420,6 +2437,9 @@ async function loadCharacter(){
     gunActions.Jump=gunActions.Jump||findClip(['jump_gun','jump_weapon','run_gun_shoot'])||actions.Jump;
 
     setAction('Idle',0);
+    mixer.update(0);
+    __CDDA_refreshWeaponRig();
+    __CDDA_captureCombatNeutralPose();
     characterReady=true;
     loading.textContent='Replacement character ready.';
     console.log('Replacement character loaded:',{
@@ -2830,7 +2850,7 @@ function updatePlayer(dt,time){
   const moving=move.lengthSq()>1e-5;
   if(moving) move.normalize();
 
-  const sprint=input.shift;
+  const sprint=input.shift && !input.aim && !input.fire;
   const speed=input.aim ? (sprint?8.2:4.9) : (sprint?10.5:6.2);
 
   // Restore the original movement model:
@@ -3078,10 +3098,42 @@ const __CDDA_weaponRig={
 
 let __CDDA_weaponRigReady=false;
 let __CDDA_aimPoseWeight=0;
+const __CDDA_combatNeutralPose=[];
+
+function __CDDA_captureCombatNeutralPose(){
+  __CDDA_combatNeutralPose.length=0;
+  const bones=window.__CDDAWeaponBones;
+  if(!bones) return;
+  for(const key of [
+    'spine05','spine04','spine03','spine02','spine01',
+    'clavicleL','clavicleR'
+  ]){
+    const bone=bones[key];
+    if(!bone) continue;
+    __CDDA_combatNeutralPose.push({
+      bone,
+      quaternion:bone.quaternion.clone()
+    });
+  }
+}
+
+function __CDDA_restoreCombatNeutralPose(){
+  for(const item of __CDDA_combatNeutralPose){
+    item.bone.quaternion.copy(item.quaternion);
+    item.bone.updateMatrixWorld(true);
+  }
+}
 
 function __CDDA_refreshWeaponRig(){
   if(!characterRoot) return false;
   const names={
+    spine01:'scout:spine01',
+    spine02:'scout:spine02',
+    spine03:'scout:spine03',
+    spine04:'scout:spine04',
+    spine05:'scout:spine05',
+    clavicleL:'scout:clavicle.L',
+    clavicleR:'scout:clavicle.R',
     rightUpper:'scout:upperarm01.r',
     rightElbow:'scout:lowerarm01.r',
     rightWrist:'scout:wrist.r',
@@ -3198,7 +3250,9 @@ function __CDDA_weaponPoseFromGrips(rightGripWorld,leftGripWorld,outPosition,out
   weaponBasis.makeBasis(right,correctedUp,forward);
   outQuaternion.setFromRotationMatrix(weaponBasis);
 
-  const scaledSocket=__CDDA_weaponRig.rightGrip.clone().multiplyScalar(weaponRoot?.scale.x||1);
+  const gripLocal=(weaponSockets.rightGrip?.position?.clone()||__CDDA_weaponRig.rightGrip.clone())
+    .multiplyScalar(weaponRoot?.scale.x||1);
+  const scaledSocket=gripLocal;
   scaledSocket.applyQuaternion(outQuaternion);
   outPosition.copy(rightGripWorld).sub(scaledSocket);
 }
@@ -3219,30 +3273,39 @@ function __CDDA_getBaseHandTargets(){
 function __CDDA_getWeaponGripTargets(aimWeight){
   const playerPos=player.getWorldPosition(new THREE.Vector3());
   const forward=getRoleForward();
-  const rightAxis=new THREE.Vector3(1,0,0).applyQuaternion(player.getWorldQuaternion(new THREE.Quaternion())).normalize();
+  const rightAxis=new THREE.Vector3(1,0,0)
+    .applyQuaternion(player.getWorldQuaternion(new THREE.Quaternion()))
+    .normalize();
   const up=new THREE.Vector3(0,1,0);
 
-  // Low-ready: both hands stay on the weapon, but the muzzle sits below the
-  // line of sight. Aim/fire raises both hands and squares the shoulders.
+  // Match hand spacing to the actual weapon sockets. Both hands stay on the
+  // right-shoulder side of the body instead of pulling the rifle diagonally
+  // across the chest.
   const rightHeight=THREE.MathUtils.lerp(1.18,1.34,aimWeight);
-  const leftHeight=THREE.MathUtils.lerp(1.08,1.34,aimWeight);
-  const rightForward=THREE.MathUtils.lerp(.40,.52,aimWeight);
-  const leftForward=THREE.MathUtils.lerp(.94,1.06,aimWeight);
+  const rightForward=THREE.MathUtils.lerp(.38,.50,aimWeight);
+  const lateralRight=THREE.MathUtils.lerp(.17,.19,aimWeight);
+  const lateralLeft=THREE.MathUtils.lerp(.12,.14,aimWeight);
+  const scale=weaponRoot?.scale.x||.60;
+  const fallbackSpan=Math.abs(__CDDA_weaponRig.leftGrip.z-__CDDA_weaponRig.rightGrip.z)*scale;
+  const socketSpan=weaponSockets.leftGrip&&weaponSockets.rightGrip
+    ? Math.abs(weaponSockets.leftGrip.position.z-weaponSockets.rightGrip.position.z)*scale
+    : fallbackSpan;
+  const leftForward=rightForward+socketSpan;
 
   const r=playerPos.clone()
-    .addScaledVector(rightAxis,.20)
+    .addScaledVector(rightAxis,lateralRight)
     .addScaledVector(up,rightHeight)
     .addScaledVector(forward,rightForward);
 
   const l=playerPos.clone()
-    .addScaledVector(rightAxis,-.20)
-    .addScaledVector(up,leftHeight)
+    .addScaledVector(rightAxis,lateralLeft)
+    .addScaledVector(up,rightHeight+.008)
     .addScaledVector(forward,leftForward);
 
   if(recoilKick>.001){
-    const recoil=forward.clone().multiplyScalar(-.045*recoilKick);
+    const recoil=forward.clone().multiplyScalar(-.040*recoilKick);
     r.add(recoil); l.add(recoil);
-    r.y+=.018*recoilKick; l.y+=.012*recoilKick;
+    r.y+=.012*recoilKick; l.y+=.010*recoilKick;
   }
 
   return {right:r,left:l};
@@ -3258,18 +3321,28 @@ function __CDDA_applyHeadAim(weight){
 
   const cameraDir=new THREE.Vector3();
   camera.getWorldDirection(cameraDir);
-  cameraDir.y=0;
   if(cameraDir.lengthSq()<1e-6) cameraDir.copy(forward);
   cameraDir.normalize();
 
-  const yawTarget=Math.atan2(cameraDir.x,cameraDir.z);
+  const horizontal=new THREE.Vector3(cameraDir.x,0,cameraDir.z);
+  if(horizontal.lengthSq()<1e-6) horizontal.copy(forward);
+  horizontal.normalize();
+
+  const yawTarget=Math.atan2(horizontal.x,horizontal.z);
   const bodyYaw=player.rotation.y;
   let relYaw=THREE.MathUtils.euclideanModulo(yawTarget-bodyYaw+Math.PI,Math.PI*2)-Math.PI;
-  relYaw=THREE.MathUtils.clamp(relYaw,-THREE.MathUtils.degToRad(32),THREE.MathUtils.degToRad(32));
+  relYaw=THREE.MathUtils.clamp(
+    relYaw,
+    -THREE.MathUtils.degToRad(28),
+    THREE.MathUtils.degToRad(28)
+  );
 
-  // A small downward pitch makes the eyes track the sight/receiver instead of
-  // the horizon. The down-looking component is deliberately subtle.
-  const pitch=THREE.MathUtils.degToRad(7);
+  let pitch=-Math.asin(THREE.MathUtils.clamp(cameraDir.y,-.92,.92));
+  pitch=THREE.MathUtils.clamp(
+    pitch+THREE.MathUtils.degToRad(2),
+    -THREE.MathUtils.degToRad(8),
+    THREE.MathUtils.degToRad(15)
+  );
 
   for(const [bone,share] of [
     [bones.neck1,.25],[bones.neck2,.25],[bones.neck3,.20],[bones.head,.30]
@@ -3291,143 +3364,132 @@ function __CDDA_restoreHeadPose(){
 function __CDDA_applyWeaponPose(dt){
   if(!weaponRoot) return;
 
-  // The weapon state machine must keep running even when the optional IK rig
-  // has not resolved its exact bone names yet. Otherwise a queued LMB shot
-  // can remain stuck forever in the "drawing" state.
   const rigReady=!!characterRoot &&
     (__CDDA_weaponRigReady || __CDDA_refreshWeaponRig());
 
-  // Hard guarantee: complete the timed draw/holster transition independently
-  // of IK availability, including the queued first shot.
-  if(weaponTransition.active){
-    const raw=(performance.now()-weaponTransition.startedAt)/weaponTransition.duration;
-    if(raw>=1){
-      weaponTransition.active=false;
-      if(weaponTransition.target==='equipped'){
-        weaponState='equipped';
-        if(fireQueued){
-          fireQueued=false;
-          fireWeapon();
-        }
-      }else{
-        weaponState='holstered';
-        __CDDA_aimPoseWeight=0;
-        fireQueued=false;
-      }
-    }
-  }
-
-  // IK can fail temporarily while assets/bones are being prepared, but that
-  // must never disable the weapon state machine or firing.
-  if(!rigReady){
-    const fallbackPosition=new THREE.Vector3();
-    const fallbackQuaternion=new THREE.Quaternion();
-    getWeaponHandWorldPose(fallbackPosition,fallbackQuaternion);
-
-    const fallbackLocal=fallbackPosition.clone();
-    player.worldToLocal(fallbackLocal);
-    const fallbackLocalQuaternion=player.getWorldQuaternion(new THREE.Quaternion())
-      .invert().multiply(fallbackQuaternion);
-
-    if(weaponState==='holstered'){
-      weaponRoot.position.copy(weaponHolsterPosition);
-      weaponRoot.quaternion.copy(weaponHolsterQuaternion);
-    }else if(weaponState==='equipped'){
-      weaponRoot.position.copy(fallbackLocal);
-      weaponRoot.quaternion.copy(fallbackLocalQuaternion);
-    }else if(weaponTransition.active){
-      const raw=THREE.MathUtils.clamp(
-        (performance.now()-weaponTransition.startedAt)/weaponTransition.duration,0,1
-      );
-      const p=smoothWeaponT(raw);
-      if(weaponState==='drawing'){
-        weaponRoot.position.lerpVectors(
-          weaponTransition.fromPosition,fallbackLocal,p
-        );
-        weaponRoot.quaternion.copy(weaponTransition.fromQuaternion)
-          .slerp(fallbackLocalQuaternion,p);
-      }else{
-        weaponRoot.position.lerpVectors(
-          weaponTransition.fromPosition,weaponHolsterPosition,p
-        );
-        weaponRoot.quaternion.copy(weaponTransition.fromQuaternion)
-          .slerp(weaponHolsterQuaternion,p);
-      }
-    }
-    return;
-  }
-
-  characterRoot.updateMatrixWorld(true);
-
   let armBlend=1;
-  if(weaponState==='holstered') armBlend=0;
-  else if(weaponState==='drawing'){
-    armBlend=smoothWeaponT((performance.now()-weaponTransition.startedAt)/weaponTransition.duration);
+  if(weaponState==='holstered'){
+    armBlend=0;
+  }else if(weaponState==='drawing'){
+    armBlend=smoothWeaponT(
+      (performance.now()-weaponTransition.startedAt)/weaponTransition.duration
+    );
   }else if(weaponState==='holstering'){
-    armBlend=1-smoothWeaponT((performance.now()-weaponTransition.startedAt)/weaponTransition.duration);
+    armBlend=1-smoothWeaponT(
+      (performance.now()-weaponTransition.startedAt)/weaponTransition.duration
+    );
   }
   armBlend=THREE.MathUtils.clamp(armBlend,0,1);
   weaponPoseWeight=armBlend;
 
-  const poseWanted=(weaponState==='equipped' && (input.aim||input.fire||recoilKick>.08))?1:0;
-  __CDDA_aimPoseWeight=THREE.MathUtils.damp(__CDDA_aimPoseWeight,poseWanted,input.fire?34:13,dt);
+  const poseWanted=weaponState==='equipped'
+    ? (input.aim?1:(input.fire?.82:.15))
+    : 0;
+  __CDDA_aimPoseWeight=THREE.MathUtils.damp(
+    __CDDA_aimPoseWeight,
+    poseWanted,
+    input.aim?24:(input.fire?30:10),
+    dt
+  );
 
-  const baseHands=__CDDA_getBaseHandTargets();
-  const targetHands=__CDDA_getWeaponGripTargets(__CDDA_aimPoseWeight);
-  const blendedR=baseHands.right.clone().lerp(targetHands.right,armBlend);
-  const blendedL=baseHands.left.clone().lerp(targetHands.left,armBlend);
+  const baseHands=rigReady?__CDDA_getBaseHandTargets():null;
+  const targetHands=rigReady
+    ? __CDDA_getWeaponGripTargets(__CDDA_aimPoseWeight)
+    : null;
 
-  if(armBlend>.001){
-    const p=player.getWorldPosition(new THREE.Vector3());
-    const hintR=blendedR.clone().add(
-      new THREE.Vector3(1,0,0).applyQuaternion(player.getWorldQuaternion(new THREE.Quaternion())).multiplyScalar(.50)
-    ).addScaledVector(new THREE.Vector3(0,-1,.20),.15);
-    const hintL=blendedL.clone().add(
-      new THREE.Vector3(-1,0,0).applyQuaternion(player.getWorldQuaternion(new THREE.Quaternion())).multiplyScalar(.42)
-    ).addScaledVector(new THREE.Vector3(0,-1,.20),.15);
+  const readyPosition=new THREE.Vector3();
+  const readyQuaternion=new THREE.Quaternion();
+  const fallbackRight=player.getWorldPosition(new THREE.Vector3())
+    .addScaledVector(new THREE.Vector3(1,0,0).applyQuaternion(player.quaternion),.17)
+    .add(new THREE.Vector3(0,1.18,.38).applyQuaternion(player.quaternion));
+  const fallbackLeft=fallbackRight.clone().add(getRoleForward().multiplyScalar(.67));
 
-    // Right hand = rear/trigger grip. Left hand = forward support grip.
+  __CDDA_weaponPoseFromGrips(
+    targetHands?.right||fallbackRight,
+    targetHands?.left||fallbackLeft,
+    readyPosition,
+    readyQuaternion
+  );
+
+  const readyLocalPosition=readyPosition.clone();
+  player.worldToLocal(readyLocalPosition);
+  const playerInverse=player.getWorldQuaternion(new THREE.Quaternion()).invert();
+  const readyLocalQuaternion=playerInverse.multiply(readyQuaternion);
+
+  if(weaponState==='drawing'){
+    weaponRoot.position.lerpVectors(
+      weaponTransition.fromPosition,
+      readyLocalPosition,
+      armBlend
+    );
+    weaponRoot.quaternion.copy(weaponTransition.fromQuaternion)
+      .slerp(readyLocalQuaternion,armBlend);
+  }else if(weaponState==='holstering'){
+    const p=1-armBlend;
+    weaponRoot.position.lerpVectors(
+      weaponTransition.fromPosition,
+      weaponHolsterPosition,
+      p
+    );
+    weaponRoot.quaternion.copy(weaponTransition.fromQuaternion)
+      .slerp(weaponHolsterQuaternion,p);
+  }else if(weaponState==='holstered'){
+    weaponRoot.position.copy(weaponHolsterPosition);
+    weaponRoot.quaternion.copy(weaponHolsterQuaternion);
+  }else{
+    weaponRoot.position.copy(readyLocalPosition);
+    weaponRoot.quaternion.copy(readyLocalQuaternion);
+  }
+
+  if(rigReady&&armBlend>.001){
+    weaponRoot.updateMatrixWorld(true);
+
+    const currentR=weaponSockets.rightGrip
+      ? weaponSockets.rightGrip.getWorldPosition(new THREE.Vector3())
+      : targetHands.right.clone();
+    const currentL=weaponSockets.leftGrip
+      ? weaponSockets.leftGrip.getWorldPosition(new THREE.Vector3())
+      : targetHands.left.clone();
+
+    const blendedR=baseHands.right.clone().lerp(currentR,armBlend);
+    const blendedL=baseHands.left.clone().lerp(currentL,armBlend);
+
+    if(input.aim||input.fire){
+      __CDDA_restoreCombatNeutralPose();
+      characterRoot.updateMatrixWorld(true);
+    }
+
+    const worldQ=weaponRoot.getWorldQuaternion(new THREE.Quaternion());
+    const worldForward=new THREE.Vector3(0,0,1).applyQuaternion(worldQ).normalize();
+    const worldRight=new THREE.Vector3(1,0,0).applyQuaternion(worldQ).normalize();
+
+    const hintR=blendedR.clone()
+      .addScaledVector(worldRight,.20)
+      .addScaledVector(worldForward,-.22)
+      .add(new THREE.Vector3(0,-.08,.0));
+    const hintL=blendedL.clone()
+      .addScaledVector(worldRight,-.08)
+      .addScaledVector(worldForward,.12)
+      .add(new THREE.Vector3(0,-.05,.0));
+
     __CDDA_solveArm('right',blendedR,hintR,armBlend);
     characterRoot.updateMatrixWorld(true);
     __CDDA_solveArm('left',blendedL,hintL,armBlend);
     characterRoot.updateMatrixWorld(true);
 
-    if(__CDDA_aimPoseWeight>.01){
+    if(__CDDA_aimPoseWeight>.35){
       __CDDA_applyHeadAim(__CDDA_aimPoseWeight);
       characterRoot.updateMatrixWorld(true);
     }
   }
 
-  const readyWorldPosition=new THREE.Vector3();
-  const readyWorldQuaternion=new THREE.Quaternion();
-  __CDDA_weaponPoseFromGrips(
-    targetHands.right,targetHands.left,
-    readyWorldPosition,readyWorldQuaternion
-  );
-  const ready=__CDDA_playerLocalPose(readyWorldPosition,readyWorldQuaternion);
-
-  const holsterPos=weaponHolsterPosition.clone();
-  const holsterQ=weaponHolsterQuaternion.clone();
-
-  if(armBlend<.999){
-    weaponRoot.position.lerpVectors(holsterPos,ready.position,armBlend);
-    weaponRoot.quaternion.copy(holsterQ).slerp(ready.quaternion,armBlend);
-  }else{
-    weaponRoot.position.copy(ready.position);
-    weaponRoot.quaternion.copy(ready.quaternion);
-  }
-
-  weaponRoot.position.z-=recoilKick*.012;
-
   if(muzzleFlash){
     muzzleFlash.visible=recoilKick>.06&&weaponState!=='holstered';
-    muzzleFlash.scale.setScalar(.74+recoilKick*.95);
+    muzzleFlash.scale.setScalar(.74+recoilKick*1.05);
   }
 
-  aimWeight=THREE.MathUtils.damp(aimWeight,input.aim?1:0,16,dt);
-  recoilKick=Math.max(0,recoilKick-dt*8.5);
-  recoilYaw=THREE.MathUtils.damp(recoilYaw,0,12,dt);
-  recoilPitch=THREE.MathUtils.damp(recoilPitch,0,12,dt);
+  updateAimVisual(aimWeight);
+  weaponRoot.position.z-=recoilKick*.018;
 
   if(weaponTransition.active){
     const raw=(performance.now()-weaponTransition.startedAt)/weaponTransition.duration;
@@ -3435,9 +3497,6 @@ function __CDDA_applyWeaponPose(dt){
       weaponTransition.active=false;
       if(weaponTransition.target==='equipped'){
         weaponState='equipped';
-
-        // Complete a click that occurred while the rifle was holstered.
-        // This keeps a normal tap from losing its first shot during draw.
         if(fireQueued){
           fireQueued=false;
           fireWeapon();
@@ -3449,8 +3508,11 @@ function __CDDA_applyWeaponPose(dt){
       }
     }
   }
-}
 
+  recoilKick=Math.max(0,recoilKick-dt*8.5);
+  recoilYaw=THREE.MathUtils.damp(recoilYaw,0,12,dt);
+  recoilPitch=THREE.MathUtils.damp(recoilPitch,0,12,dt);
+}
 // Replace the old "grasp clip" layer. The character asset's grasp clip is kept
 // as source material, but it no longer drives the arms into a mismatched pose.
 updateWeaponAnimation=function(dt){
@@ -3505,6 +3567,10 @@ window.__GAME_STATE__=()=>({
     state:weaponState,
     transition:weaponTransition.active,
     poseWeight:weaponPoseWeight,
-    ammo
+    ammo,
+    combatPose:__CDDA_aimPoseWeight,
+    rightGrip:weaponSockets.rightGrip?.name||null,
+    leftGrip:weaponSockets.leftGrip?.name||null,
+    muzzle:weaponSockets.muzzle?.name||null
   }
 });

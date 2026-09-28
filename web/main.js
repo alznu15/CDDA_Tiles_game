@@ -1039,7 +1039,6 @@ function getCameraClearDistance(target,desired){
   let safeDistance=distance;
 
   for(const c of staticColliders){
-    if(c.passable && c.passable(cameraRay.origin.x,cameraRay.origin.z)) continue;
     cameraBox.min.set(
       c.x-c.w*.5-cameraCollisionRadius,
       -cameraCollisionRadius,

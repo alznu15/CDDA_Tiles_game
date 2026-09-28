@@ -26,61 +26,60 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Find a rigged sci-fi character through three.ws catalog API
+      - name: Find redistributable rigged sci-fi character through three.ws
         shell: bash
         run: |
           set -euo pipefail
 
           echo "Querying three.ws public character catalog..."
           curl -fsS --retry 5 --retry-all-errors --retry-delay 3 \
-            "https://three.ws/api/catalog?q=sci+fi+soldier&kind=character&limit=30" \
+            "https://three.ws/api/catalog?q=sci+fi&kind=character&limit=100" \
             -o /tmp/catalog.json
 
-          echo "Catalog response:"
-          cat /tmp/catalog.json
+          echo "Catalog returned:"
+          jq '.items[] | {id,title,license,tags,url}' /tmp/catalog.json
 
-          MODEL_URL="$(jq -r '
+          MODEL_JSON="$(jq -c '
             .items[]
+            | select(
+                ((.license // "")
+                  | test("^(CC0|CC0 1\.0|CC-BY-4\.0|CC-BY|Apache-2\.0|MIT)$"; "i"))
+              )
             | select(
                 (
                   ((.title // "") + " " + ((.tags // []) | join(" ")))
-                  | test("sci|soldier|tactical|military|space|combat"; "i")
+                  | test("sci|soldier|tactical|military|space|combat|armor|robot"; "i")
                 )
               )
-            | .url
-          ' /tmp/catalog.json | grep -E '^https://.*(glb)([?#].*)?$' | head -n 1 || true)"
+            | {id,title,license,url,tags}
+          ' /tmp/catalog.json | head -n 1)"
 
-          if [ -z "$MODEL_URL" ]; then
-            MODEL_URL="$(jq -r '.items[]?.url // empty' /tmp/catalog.json | grep -E '^https://.*(glb)([?#].*)?$' | head -n 1 || true)"
-          fi
-
-          if [ -z "$MODEL_URL" ]; then
-            echo "No usable GLB URL found in the public character catalog."
+          if [ -z "$MODEL_JSON" ]; then
+            echo "No redistributable sci-fi character was found."
+            echo "Refusing to ship a character with an incompatible/unclear license."
             exit 1
           fi
 
-          echo "Selected model: $MODEL_URL"
+          echo "Selected catalog item:"
+          echo "$MODEL_JSON"
 
-          MODEL_ID="$(jq -r '
-            .items[]
-            | select(.url == $URL)
-            | .id
-          ' --arg URL "$MODEL_URL" /tmp/catalog.json | head -n 1 || true)"
+          MODEL_URL="$(jq -r '.url' <<<"$MODEL_JSON")"
+          MODEL_ID="$(jq -r '.id' <<<"$MODEL_JSON")"
+          MODEL_TITLE="$(jq -r '.title' <<<"$MODEL_JSON")"
+          MODEL_LICENSE="$(jq -r '.license' <<<"$MODEL_JSON")"
 
-          MODEL_TITLE="$(jq -r '
-            .items[]
-            | select(.url == $URL)
-            | .title
-          ' --arg URL "$MODEL_URL" /tmp/catalog.json | head -n 1 || true)"
-
-          MODEL_LICENSE="$(jq -r '
-            .items[]
-            | select(.url == $URL)
-            | .license
-          ' --arg URL "$MODEL_URL" /tmp/catalog.json | head -n 1 || true)"
+          if ! printf '%s\n' "$MODEL_URL" | grep -Eq '^https://.*\\.glb([?#].*)?$'; then
+            echo "Selected asset does not expose a direct HTTPS GLB URL."
+            exit 1
+          fi
 
           mkdir -p web/assets/player
 
+          # Remove the previous Mixamo-derived file from the current branch.
+          rm -f web/assets/player/CDDA_SciFi_Soldier_Generated.glb
+          rm -f web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json
+
+          echo "Downloading $MODEL_URL"
           curl -fL --retry 5 --retry-all-errors --retry-delay 3 \
             "$MODEL_URL" \
             -o web/assets/player/CDDA_SciFi_Soldier_Generated.glb
@@ -117,13 +116,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add web/assets/player/CDDA_SciFi_Soldier_Generated.glb
-          git add web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json
+          git add -A web/assets/player/CDDA_SciFi_Soldier_Generated.glb
+          git add -A web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json
 
           if git diff --cached --quiet; then
             echo "Character asset is unchanged; nothing to commit."
             exit 0
           fi
 
-          git commit -m "chore(character): add cloud-acquired rigged sci-fi GLB"
+          git commit -m "chore(character): use redistributable cloud character"
           git push

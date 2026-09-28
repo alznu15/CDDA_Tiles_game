@@ -257,7 +257,7 @@ function addCentralFountain(){
   });
 
   const base=new THREE.Mesh(
-    new THREE.CylinderGeometry(5.35,5.75,.46,48),
+    new THREE.CylinderGeometry(6.05,6.45,.46,48),
     basinMat
   );
   base.position.y=.23;
@@ -266,7 +266,7 @@ function addCentralFountain(){
   g.add(base);
 
   const lowerTrim=new THREE.Mesh(
-    new THREE.TorusGeometry(5.25,.18,10,56),
+    new THREE.TorusGeometry(5.95,.18,10,56),
     trimMat
   );
   lowerTrim.rotation.x=Math.PI/2;
@@ -275,7 +275,7 @@ function addCentralFountain(){
   g.add(lowerTrim);
 
   const pool=new THREE.Mesh(
-    new THREE.CylinderGeometry(4.72,4.78,.06,48),
+    new THREE.CylinderGeometry(5.35,5.42,.06,48),
     poolMat
   );
   pool.position.y=.55;
@@ -283,7 +283,7 @@ function addCentralFountain(){
   g.add(pool);
 
   const ring=new THREE.Mesh(
-    new THREE.TorusGeometry(4.92,.16,10,56),
+    new THREE.TorusGeometry(5.58,.16,10,56),
     trimMat
   );
   ring.rotation.x=Math.PI/2;
@@ -445,15 +445,15 @@ function addCentralFountain(){
 
   // Dense main fountain: large droplets travel on wide ballistic arcs.
   const main=createParticleSystem(
-    520,
+    650,
     waterMat,
     {
       spawnMode:'emitter',
       spawnY:2.18,
       spawnSpreadY:.18,
       startRadius:[.08,.48],
-      speedOut:[1.7,3.75],
-      speedY:[3.9,5.15],
+      speedOut:[1.45,2.65],
+      speedY:[4.1,5.25],
       tangent:.55,
       gravity:-7.9,
       windX:.035,
@@ -470,7 +470,7 @@ function addCentralFountain(){
   // Near-core curtain: this fills the section directly under the water orb
   // so the fountain does not look like isolated bullet points.
   const inner=createParticleSystem(
-    300,
+    360,
     waterBrightMat,
     {
       spawnMode:'orb',
@@ -495,13 +495,13 @@ function addCentralFountain(){
   // Impact spray: secondary droplets are emitted from the pool edge where
   // the main arcs arrive, giving the landing point some physical response.
   const splash=createParticleSystem(
-    190,
+    240,
     waterBrightMat,
     {
       spawnMode:'impact',
       spawnY:.62,
       spawnSpreadY:.02,
-      startRadius:[2.85,4.45],
+      startRadius:[2.55,4.65],
       speedOut:[.18,.9],
       speedY:[.35,1.45],
       tangent:.22,
@@ -601,7 +601,7 @@ function addCentralFountain(){
   // Broad, low top surface. The player is meant to step onto this naturally;
   // no visible ramp and no giant blocking rectangle.
   const stepInner=3.55;
-  const stepOuter=5.08;
+  const stepOuter=5.78;
   addWalkableSurface(
     0,0,stepOuter*2.1,stepOuter*2.1,.72,
     null,
@@ -665,17 +665,17 @@ function addCentralFountain(){
 
     ripples.forEach((r,i)=>{
       const t=(time*.00036+i*.12)%1;
-      r.scale.setScalar(.62+t*2.35);
+      r.scale.setScalar(.5+t*1.15);
       r.material.opacity=.42*(1-t)*(i===0?.9:1);
     });
 
     impactRipples.forEach((r,i)=>{
       const t=(time*.00105+i*.21)%1;
       const a=time*.00015+i*1.256;
-      const radius=2.8+(i%3)*.58;
+      const radius=2.45+(i%3)*.48;
       r.position.x=Math.cos(a)*radius;
       r.position.z=Math.sin(a)*radius;
-      r.scale.setScalar(.6+t*2.5);
+      r.scale.setScalar(.55+t*.95);
       r.material.opacity=.34*(1-t);
     });
   };

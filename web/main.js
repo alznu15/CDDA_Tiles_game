@@ -200,7 +200,8 @@ function buildMap(){
   ground.rotation.x=-Math.PI/2;
   ground.receiveShadow=true;
   world.add(ground);
-  box(220,.08,220,0,-.04,0,MAT.soil);
+  // Keep soil below grass to prevent z-fighting.
+  box(220,.08,220,0,-.05,0,MAT.soil);
 
   // Fresh road layout. Nothing from the previous map is reused.
   addRoad(0,0,22,220);

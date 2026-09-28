@@ -1,7 +1,14 @@
 {
-  "source": "three.ws public character catalog",
-  "id": "character:alien-soldier",
-  "title": "Alien Soldier",
-  "license": "Mixamo",
-  "sourceUrl": "https://pub-2534e921bf9c4314addcd4d8a6e98b7b.r2.dev/avatars/mixamo/glb/alien-soldier.glb"
+  "source": "3DAssets.dev Gorgehold Scout",
+  "sourcePage": "https://3dassets.dev/assets/gorgehold-survivor-gallery-and-operations-gorgehold-sc-5418288a",
+  "sourceUrl": "https://cdn.3dassets.dev/assets/32901/v1/model.glb",
+  "sourceLicense": "CC0 1.0 Universal",
+  "skeleton": "74-joint",
+  "animations": [
+    "idle",
+    "walk",
+    "run",
+    "grasp"
+  ],
+  "notes": "Cloud-acquired, self-contained GLB. No extra decoder required."
 }

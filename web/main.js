@@ -2004,7 +2004,7 @@ function makeWeapon(){
 
   weaponSockets.leftGrip=new THREE.Object3D();
   weaponSockets.leftGrip.name='LeftGrip';
-  weaponSockets.leftGrip.position.set(0,-.18,.70);
+  // Forward support hand belongs on the physical foregrip.\n  weaponSockets.leftGrip.position.set(0,-.17,.02);
   weaponSockets.leftGrip.userData.role='support_hand';
   weaponRoot.add(weaponSockets.leftGrip);
 
@@ -2646,10 +2646,10 @@ function handleKeyDown(e){
   updateInputDiagnostics();
 
   if(code==='Space'){
+    // Leave browser/system modifier combinations such as Ctrl+Shift+Space alone.
+    if(e.ctrlKey||e.altKey||e.metaKey) return;
     e.preventDefault();
-
     setInput('Space',true);
-
     if(!e.repeat){
       performJump();
       requestJump();
@@ -2668,25 +2668,11 @@ function handleKeyDown(e){
 function performJump(){
   if(!started || !grounded) return false;
 
-  const now=performance.now();
-  const sprinting=input.w && input.shift;
-
-  if(sprinting && now-sprintJump.lastTrigger<sprintJump.cooldown) return false;
-
   verticalVelocity=jumpSpeed;
   grounded=false;
   jumpRequest=false;
 
-  // Sprint is completely independent from Jump.
-  // Space only decides "jump"; the current sprint state decides
-  // whether the special sprint-jump animation path is used.
-  if(sprinting){
-    sprintJump.active=true;
-    sprintJump.phase=0;
-    sprintJump.timer=now;
-    sprintJump.lastTrigger=now;
-  }
-
+  // Space is always a normal jump. No W+Shift or modifier combo is involved.
   return true;
 }
 
@@ -2694,36 +2680,14 @@ function handleKeyUp(e){
   const code=normalizeCode(e);
   recordInputEvent('keyup',e,code);
   updateInputDiagnostics();
-
-  // Compatibility path: some keyboard/browser combinations expose Space
-  // on keyup but not keydown. Treat that Space as a real jump event too.
-  if(code==='Space' && started && grounded){
-    performJump();
-  }
-
   if(code) setInput(code,false);
 }
 
 addEventListener('keydown',handleKeyDown,true);
-addEventListener('keypress',e=>{
-  const code=normalizeCode(e);
-  recordInputEvent('keypress',e,code);
-  updateInputDiagnostics();
-  if(code==='Space'){
-    e.preventDefault();
-    if(!e.repeat) performJump();
-  }
-},true);
 addEventListener('keyup',handleKeyUp,true);
 
-// Additional compatibility path for browsers that expose a printable Space
-// key through beforeinput instead of the expected keyboard event.
-addEventListener('beforeinput',e=>{
-  if(e.inputType==='insertText' && (e.data===' ' || e.data===null)){
-    e.preventDefault();
-    performJump();
-  }
-},false);
+// Jump is driven only by the real Space keydown. No keypress/beforeinput
+// compatibility path is used, so Ctrl+Shift+Space cannot enter gameplay.
 
 addEventListener('contextmenu',e=>e.preventDefault());
 
@@ -2850,7 +2814,7 @@ function updatePlayer(dt,time){
   const moving=move.lengthSq()>1e-5;
   if(moving) move.normalize();
 
-  const sprint=input.shift && !input.aim && !input.fire;
+  // Hip-fire is compatible with sprint. ADS is the only state that blocks sprint.\n  const sprint=input.shift && !input.aim;
   const speed=input.aim ? (sprint?8.2:4.9) : (sprint?10.5:6.2);
 
   // Restore the original movement model:
@@ -2968,14 +2932,7 @@ function updatePlayer(dt,time){
   }
 
   if(characterReady){
-    if(sprintJump.active){
-      const jumpAction=gunActions.Jump||actions.Jump||gunActions.Run||actions.Run||gunActions.Idle||actions.Idle;
-      if(jumpAction) setAction(jumpAction,.06);
-      sprintJump.phase=Math.min(1,(performance.now()-sprintJump.timer)/620);
-      if(sprintJump.phase>=1 && grounded) sprintJump.active=false;
-    }else{
-      setAction(moving?(sprint?'Run':'Walk'):'Idle',.15);
-    }
+    setAction(moving?(sprint?'Run':'Walk'):'Idle',.15);
   }
 
   if(weaponRoot){

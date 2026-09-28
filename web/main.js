@@ -131,6 +131,8 @@ const MAT = {
   door:new THREE.MeshStandardMaterial({color:0x30383d,roughness:.46,metalness:.42})
 };
 
+bindPBR(MAT.grass,'grass_ground',18,18,.34);
+bindPBR(MAT.soil,'park_dirt',9,9,.48);
 bindPBR(MAT.road,'asphalt_07',7,28,.38);
 bindPBR(MAT.curb,'concrete_pavement_02',4,18,.55);
 bindPBR(MAT.concrete,'concrete_pavement_03',5,5,.5);
@@ -157,6 +159,18 @@ function collider(x,z,w,d,pad=.7,h=32,passable=null) {
   staticColliders.push({shape:'box',x,z,w:w+pad,d:d+pad,h,passable});
 }
 
+function orientedCollider(x,z,w,d,h,rot=0,pad=.08,passable=null){
+  const quarter=Math.abs(Math.sin(rot))>.5;
+  staticColliders.push({
+    shape:'box',
+    x,z,
+    w:(quarter?d:w)+pad,
+    d:(quarter?w:d)+pad,
+    h,
+    passable
+  });
+}
+
 function circleCollider(x,z,r,h=32,passable=null) {
   staticColliders.push({shape:'circle',x,z,radius:r,h,passable});
 }
@@ -179,10 +193,14 @@ function groundHeightAt(x,z){
   return height;
 }
 
-function isBlocked(x,z,r=.55) {
+function isBlocked(x,z,r=.55,feetY=0,airborne=false) {
   if (x < -176 || x > 176 || z < -176 || z > 176) return true;
   for (const c of staticColliders) {
     if(c.passable && c.passable(x,z)) continue;
+
+    // While airborne, low cover can be jumped. Tall building volumes still block.
+    if(airborne && Number.isFinite(c.h) && c.h < feetY + .34) continue;
+
     if(c.shape==='circle'){
       const dx=x-c.x;
       const dz=z-c.z;
@@ -194,8 +212,8 @@ function isBlocked(x,z,r=.55) {
   return false;
 }
 
-function canTraverseTo(x,z,fromGround){
-  if(isBlocked(x,z,playerRadius)) return false;
+function canTraverseTo(x,z,fromGround,feetY=0,airborne=false){
+  if(isBlocked(x,z,playerRadius,feetY,airborne)) return false;
   return Math.abs(groundHeightAt(x,z)-fromGround)<=terrainStepHeight;
 }
 
@@ -245,8 +263,22 @@ function addBuilding(x,z,w,d,h,mat){
   box(.28,h-.7,.18,-w/2+.16,h/2, d/2+.04,accent,g);
   box(.28,h-.7,.18,w/2-.16,h/2, d/2+.04,accent,g);
 
-  // Roof fascia.
-  box(w+.5,.46,d+.5,0,h+.23,0,MAT.roof,g);
+  // Roof silhouette varies by building instead of cloning the same cube.
+  const styleIndex=Math.abs(Math.round(x*.13+z*.07))%3;
+  if(styleIndex===1){
+    const roofA=box(w+.55,.28,d*.62,0,h+.47,-d*.16,MAT.roof,g);
+    const roofB=box(w+.55,.28,d*.62,0,h+.47,d*.16,MAT.roof,g);
+    roofA.rotation.x=-.30;
+    roofB.rotation.x=.30;
+  }else if(styleIndex===2){
+    box(w+.5,.46,d+.5,0,h+.23,0,MAT.roof,g);
+    box(Math.min(4.8,w*.42),.18,.9,0,h+.58,frontZ-.35,MAT.wood,g);
+  }else{
+    box(w+.5,.46,d+.5,0,h+.23,0,MAT.roof,g);
+  }
+
+  const facadePanelMat=styleIndex===0?MAT.wood:(styleIndex===1?MAT.brick:MAT.buildingA);
+  box(Math.min(w*.54,8.5),Math.min(2.1,h*.28),.08,0,Math.min(3.8,h*.44),frontZ-.055,facadePanelMat,g);
 
   const frontZ=d/2+.035;
   const backZ=-d/2-.035;
@@ -310,7 +342,7 @@ function addBuilding(x,z,w,d,h,mat){
   plaque.castShadow=true;
   g.add(plaque);
 
-  collider(x,z,w,d,1.2,h);
+  collider(x,z,w,d,.28,h);
 }
 
 function addTree(x,z,s=1){
@@ -407,16 +439,16 @@ function addParkBench(x,z,rot=0){
   g.rotation.y=rot;
   world.add(g);
 
-  box(2.9,.22,.68,0,.2,0,MAT.wood,g);
-  box(2.45,.72,.16,0,.54,-.26,MAT.wood,g);
-  box(.14,.42,.5,-1.05,-.02,.12,MAT.stone,g);
-  box(.14,.42,.5,1.05,-.02,.12,MAT.stone,g);
+  box(4.5,.28,.92,0,.22,0,MAT.wood,g);
+  box(3.75,.92,.18,0,.58,-.35,MAT.wood,g);
+  box(.16,.55,.64,-1.55,-.02,.16,MAT.stone,g);
+  box(.16,.55,.64,1.55,-.02,.16,MAT.stone,g);
 
   const c=Math.cos(rot),s=Math.sin(rot);
-  addWalkableSurface(x,z,2.9,.68,.5,null,(px,pz)=>{
+  addWalkableSurface(x,z,4.5,.92,.54,null,(px,pz)=>{
     const lx=(px-x)*c+(pz-z)*s;
     const lz=-(px-x)*s+(pz-z)*c;
-    return Math.abs(lx)<=1.45 && Math.abs(lz)<=.34;
+    return Math.abs(lx)<=2.25 && Math.abs(lz)<=.46;
   });
 }
 
@@ -478,6 +510,110 @@ function addParkBin(x,z){
 }
 
 function addParkTreeLine(points,s=.88){
+  points.forEach(([x,z,scale])=>addTree(x,z,scale||s));
+}
+
+function addPlayground(x,z,rot=0){
+  const g=new THREE.Group();
+  g.position.set(x,0,z);
+  g.rotation.y=rot;
+  world.add(g);
+
+  // Soft dirt/rubber play surface.
+  const pad=new THREE.Mesh(new THREE.CylinderGeometry(10.5,10.5,.08,32),MAT.parkPath);
+  pad.scale.z=.72;
+  pad.position.y=.04;
+  pad.receiveShadow=true;
+  g.add(pad);
+
+  // Low perimeter fence: explicitly jumpable.
+  const fenceH=.82, fenceW=12.5, fenceD=8.5;
+  const fenceParts=[
+    [0,fenceD/2,.16,fenceW,.82],
+    [0,-fenceD/2,.16,fenceW,.82],
+    [-fenceW/2,0,.16,fenceD,.82],
+    [fenceW/2,0,.16,fenceD,.82]
+  ];
+  fenceParts.forEach(([px,pz,th,w,h],i)=>{
+    const m=box(w,h,th,px,h/2,pz,MAT.wood,g);
+    const c=Math.cos(rot),s=Math.sin(rot);
+    const wx=x+px*c-pz*s,wz=z+px*s+pz*c;
+    orientedCollider(wx,wz,w,th,h,rot,.05);
+  });
+
+  // Sandbox with a thick wooden rim.
+  box(5.6,.45,.28,0,.225,1.2,MAT.wood,g);
+  box(5.6,.45,.28,0,.225,-1.2,MAT.wood,g);
+  box(.28,.45,2.15,-2.8,.225,0,MAT.wood,g);
+  box(.28,.45,2.15,2.8,.225,0,MAT.wood,g);
+
+  // Swing frame: connected top beam + four legs, not floating pieces.
+  const swingY=3.0;
+  box(7.0,.24,.24,0,swingY,0,MAT.metal,g);
+  for(const px of [-3.1,3.1]){
+    box(.24,swingY,.24,px,swingY/2,-.95,MAT.metal,g);
+    box(.24,swingY,.24,px,swingY/2,.95,MAT.metal,g);
+    const c=Math.cos(rot),s=Math.sin(rot);
+    for(const pz of [-.95,.95]){
+      const wx=x+px*c-pz*s,wz=z+px*s+pz*c;
+      orientedCollider(wx,wz,.24,.24,swingY,rot,.04);
+    }
+  }
+  // Seats and chains.
+  for(const sx of [-1.4,1.4]){
+    const seat=box(1.05,.13,.38,sx,1.12,0,MAT.wood,g);
+    const chainL=box(.035,1.75,.035,sx-.42,2.0,0,MAT.metal,g);
+    const chainR=box(.035,1.75,.035,sx+.42,2.0,0,MAT.metal,g);
+    chainL.material=MAT.metal;
+    chainR.material=MAT.metal;
+  }
+
+  // Climbing frame / jungle gym with large readable silhouette.
+  for(const px of [-5.0,5.0]){
+    box(.22,2.8,.22,px,1.4,2.1,MAT.metal,g);
+    box(.22,2.8,.22,px,1.4,3.8,MAT.metal,g);
+    const c=Math.cos(rot),s=Math.sin(rot);
+    for(const pz of [2.1,3.8]){
+      const wx=x+px*c-pz*s,wz=z+px*s+pz*c;
+      orientedCollider(wx,wz,.22,.22,2.8,rot,.04);
+    }
+  }
+  box(10,.22,.22,0,2.72,2.95,MAT.metal,g);
+
+  // Slide platform, ladder, rails, and a sloped slide.
+  box(2.6,.24,2.4,-3.8,2.0,-2.8,MAT.wood,g);
+  box(2.4,.18,1.7,-3.8,1.0,-1.8,MAT.metal,g);
+  const slide=box(1.9,.16,5.2,-3.8,.95,-4.2,MAT.wood,g);
+  slide.rotation.x=.38;
+  const railL=box(.12,1.0,5.2,-4.9,1.35,-4.2,MAT.metal,g);
+  const railR=box(.12,1.0,5.2,-2.7,1.35,-4.2,MAT.metal,g);
+  railL.rotation.x=.38;
+  railR.rotation.x=.38;
+
+  // Large tree + low treehouse: a visual landmark and climbable low cover.
+  const treeX=6.0, treeZ=-2.0;
+  addTree(x+treeX*Math.cos(rot)-treeZ*Math.sin(rot),z+treeX*Math.sin(rot)+treeZ*Math.cos(rot),1.45);
+
+  box(4.6,.32,3.8,treeX,1.12,treeZ,MAT.wood,g);
+  box(4.2,1.65,.18,treeX,1.95,treeZ-1.75,MAT.wood,g);
+  box(.18,1.45,3.5,treeX-2.02,1.84,treeZ,MAT.wood,g);
+  box(.18,1.45,3.5,treeX+2.02,1.84,treeZ,MAT.wood,g);
+  box(4.8,.24,4.0,treeX,2.82,treeZ,MAT.roof,g);
+  orientedCollider(
+    x+treeX*Math.cos(rot)-treeZ*Math.sin(rot),
+    z+treeX*Math.sin(rot)+treeZ*Math.cos(rot),
+    4.6,3.8,.32,rot,.05
+  );
+  addWalkableSurface(
+    x+treeX*Math.cos(rot)-treeZ*Math.sin(rot),
+    z+treeX*Math.sin(rot)+treeZ*Math.cos(rot),
+    4.4,3.5,1.28
+  );
+
+  // Perimeter posts of the play structure are combat obstacles, but the low fence remains jumpable.
+}
+
+
   points.forEach(([x,z,scale])=>addTree(x,z,scale||s));
 }
 
@@ -1260,6 +1396,9 @@ function buildMap(){
   addParkKiosk(-58,0,Math.PI/2);
   addParkKiosk(58,0,-Math.PI/2);
 
+  // Large playground becomes a distinct combat landmark and cover cluster.
+  addPlayground(46,-24,-Math.PI/2);
+
   // Layered hard cover: low planters are partial cover; longer stone walls
   // form stronger sightline breaks; neither blocks the entire map.
   for(const [x,z] of [
@@ -1285,17 +1424,16 @@ function buildMap(){
 
   // Stronger tree composition: clusters at the park edges and a few open-lane trees.
   addParkTreeLine([
-    [-68,-68,1.0],[-48,-70,.92],[-24,-69,.88],[24,-69,.9],[48,-70,.95],[68,-68,1.0],
-    [-68,68,.96],[-46,70,.92],[-22,69,.9],[24,69,.92],[48,70,.98],[68,68,1.0],
-    [-70,-24,.96],[-70,24,1.0],[70,-24,.92],[70,24,.98]
+    [-64,-66,1.0],[-47,-67,.92],[-24,-66,.88],[24,-66,.9],[47,-67,.95],[64,-66,1.0],
+    [-64,66,.96],[-46,67,.92],[-22,66,.9],[24,66,.92],[46,67,.98],[64,66,1.0],
+    [-66,-24,.96],[-66,24,1.0],[66,-24,.92],[66,24,.98]
   ]);
 
   // A few isolated canopy anchors inside the park. Their spacing deliberately
   // leaves readable combat lanes between them.
-  addTree(-30,-4,.86);
-  addTree(30,4,.9);
-  addTree(-4,30,.88);
-  addTree(4,-30,.86);
+  addTree(-30,-4,.92);
+  addTree(30,4,.96);
+  addTree(-4,30,.92);
 
   // Central landmark stays exactly where the whole layout can orient around it.
   addCentralFountain();
@@ -1784,10 +1922,10 @@ function updatePlayer(dt,time){
     const nx=player.position.x+step.x;
     const nz=player.position.z+step.z;
 
-    if(canTraverseTo(nx,player.position.z,currentGround)){
+    if(canTraverseTo(nx,player.position.z,currentGround,player.position.y,!grounded)){
       player.position.x=nx;
     }
-    if(canTraverseTo(player.position.x,nz,groundHeightAt(player.position.x,player.position.z))){
+    if(canTraverseTo(player.position.x,nz,groundHeightAt(player.position.x,player.position.z),player.position.y,!grounded)){
       player.position.z=nz;
     }
 

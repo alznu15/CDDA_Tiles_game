@@ -28,84 +28,57 @@ jobs:
           set -euo pipefail
 
           PROMPT="$(cat .github/cloud-character.prompt)"
-
-          REQUEST="$(jq -n             --arg prompt "$PROMPT"             '{
-              jsonrpc: "2.0",
-              id: 1,
-              method: "tools/call",
-              params: {
-                name: "forge_avatar",
-                arguments: { prompt: $prompt }
-              }
-            }')"
+          REQUEST="$(jq -n --arg prompt "$PROMPT" '{
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "forge_avatar",
+              arguments: { prompt: $prompt }
+            }
+          }')"
 
           GLB_URL=""
           for attempt in 1 2 3; do
             echo "Calling three.ws rigged-avatar API (attempt $attempt/3)..."
-            curl -fsS --retry 3 --retry-all-errors --retry-delay 4               -X POST "https://three.ws/api/mcp-studio"               -H "content-type: application/json"               --data "$REQUEST"               -o /tmp/threews-response.json
+            curl -fsS --retry 3 --retry-all-errors --retry-delay 4 \
+              -X POST "https://three.ws/api/mcp-studio" \
+              -H "content-type: application/json" \
+              --data "$REQUEST" \
+              -o /tmp/threews-response.json
 
+            echo "three.ws response:"
             cat /tmp/threews-response.json
 
             GLB_URL="$(jq -r '
               .. | objects |
               (.riggedGlbUrl // .glbUrl // empty)
-            ' /tmp/threews-response.json | grep -E '^https://.*\.glb([?#].*)?
-
-          echo "Downloading generated GLB..."
-          mkdir -p web/assets/player
-          curl -fL --retry 5 --retry-all-errors --retry-delay 4             "$GLB_URL"             -o web/assets/player/CDDA_SciFi_Soldier_Generated.glb
-
-          test -s web/assets/player/CDDA_SciFi_Soldier_Generated.glb
-
-          SIZE_BYTES="$(wc -c < web/assets/player/CDDA_SciFi_Soldier_Generated.glb)"
-          echo "Generated GLB size: $SIZE_BYTES bytes"
-
-          if [ "$SIZE_BYTES" -lt 100000 ]; then
-            echo "Generated GLB is implausibly small; refusing to commit it."
-            exit 1
-          fi
-
-      - name: Commit generated asset back to GitHub
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add web/assets/player/CDDA_SciFi_Soldier_Generated.glb
-          git diff --cached --quiet && {
-            echo "Generated asset is unchanged; nothing to commit."
-            exit 0
-          }
-
-          git commit -m "chore(character): add cloud-generated sci-fi soldier"
-          git push
- | head -n 1 || true)"
+            ' /tmp/threews-response.json | grep -E '^https://.*\\.glb([?#].*)?$' | head -n 1 || true)"
 
             if [ -z "$GLB_URL" ]; then
-              GLB_URL="$(grep -oE 'https://[^"[:space:]]+\.glb([^"[:space:]]*)?' /tmp/threews-response.json | head -n 1 || true)"
+              GLB_URL="$(grep -oE 'https://[^"[:space:]]+\\.glb([^"[:space:]]*)?' /tmp/threews-response.json | head -n 1 || true)"
             fi
 
             if [ -n "$GLB_URL" ]; then
               break
             fi
 
-            echo "three.ws did not return a GLB on attempt $attempt."
+            echo "No GLB returned on attempt $attempt."
             sleep $((attempt * 5))
           done
 
           if [ -z "$GLB_URL" ]; then
-            echo "No GLB URL was returned by three.ws after 3 attempts."
+            echo "three.ws did not return a rigged GLB after 3 attempts."
             exit 1
           fi
 
-          echo "Downloading generated GLB..."
           mkdir -p web/assets/player
-          curl -fL --retry 5 --retry-all-errors --retry-delay 4             "$GLB_URL"             -o web/assets/player/CDDA_SciFi_Soldier_Generated.glb
+          echo "Downloading $GLB_URL"
+          curl -fL --retry 5 --retry-all-errors --retry-delay 4 \
+            "$GLB_URL" \
+            -o web/assets/player/CDDA_SciFi_Soldier_Generated.glb
 
           test -s web/assets/player/CDDA_SciFi_Soldier_Generated.glb
-
           SIZE_BYTES="$(wc -c < web/assets/player/CDDA_SciFi_Soldier_Generated.glb)"
           echo "Generated GLB size: $SIZE_BYTES bytes"
 
@@ -123,10 +96,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add web/assets/player/CDDA_SciFi_Soldier_Generated.glb
-          git diff --cached --quiet && {
+
+          if git diff --cached --quiet; then
             echo "Generated asset is unchanged; nothing to commit."
             exit 0
-          }
+          fi
 
           git commit -m "chore(character): add cloud-generated sci-fi soldier"
           git push

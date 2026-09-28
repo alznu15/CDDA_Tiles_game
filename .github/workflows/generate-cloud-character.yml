@@ -1,9 +1,8 @@
-name: Build cloud-rigged character GLB
+name: Acquire final CC0 character GLB
 
 on:
   push:
     paths:
-      - ".github/cloud-character.prompt"
       - ".github/workflows/generate-cloud-character.yml"
   workflow_dispatch:
 
@@ -15,10 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-character:
+  acquire-character:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -26,87 +25,41 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Rig CC0 tactical character through three.ws
+      - name: Fetch 74-joint CC0 third-person scout
         shell: bash
         run: |
           set -euo pipefail
 
-          SOURCE_URL="https://cdn.3dassets.dev/assets/28523/v1/model.glb"
-          SOURCE_PAGE="https://3dassets.dev/assets/arctic-station-fps-kit-attacker-medium-aiming-fae9d485"
-
-          REQUEST="$(jq -n --arg url "$SOURCE_URL" '{
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/call",
-            params: {
-              name: "rig_mesh",
-              arguments: { glb_url: $url }
-            }
-          }')"
-
-          echo "Source character: $SOURCE_URL"
-          echo "Calling three.ws Make-It-Animatable rigging API..."
-
-          RIG_URL=""
-          LAST_RESPONSE="/tmp/rig-response.json"
-
-          for attempt in 1 2 3 4; do
-            echo "Rigging attempt $attempt/4..."
-            curl -fsS --retry 4 --retry-all-errors --retry-delay 3               -X POST "https://three.ws/api/mcp-studio"               -H "content-type: application/json"               --data "$REQUEST"               -o "$LAST_RESPONSE"
-
-            cat "$LAST_RESPONSE"
-
-            RIG_URL="$(jq -r '
-              .. | objects |
-              (.riggedGlbUrl // .rigged_glb_url // empty)
-            ' "$LAST_RESPONSE" | grep -E '^https://.*\.glb([?#].*)?$' | head -n 1 || true)"
-
-            if [ -z "$RIG_URL" ]; then
-              RIG_URL="$(grep -oE 'https://[^"[:space:]]+\.glb([^"[:space:]]*)?' "$LAST_RESPONSE" | head -n 1 || true)"
-            fi
-
-            if [ -n "$RIG_URL" ]; then
-              break
-            fi
-
-            ERROR_MSG="$(jq -r '.. | objects | (.message // .error // empty)' "$LAST_RESPONSE" 2>/dev/null | head -n 1 || true)"
-            echo "Rigging did not return a GLB. $ERROR_MSG"
-            sleep $((attempt * 5))
-          done
-
-          if [ -z "$RIG_URL" ]; then
-            echo "three.ws did not return a rigged GLB after 4 attempts."
-            exit 1
-          fi
-
-          echo "Rigged GLB: $RIG_URL"
+          SOURCE_URL="https://cdn.3dassets.dev/assets/32901/v1/model.glb"
+          SOURCE_PAGE="https://3dassets.dev/assets/gorgehold-survivor-gallery-and-operations-gorgehold-sc-5418288a"
 
           mkdir -p web/assets/player
           rm -f web/assets/player/CDDA_SciFi_Soldier_Generated.glb
           rm -f web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json
 
-          curl -fL --retry 5 --retry-all-errors --retry-delay 3             "$RIG_URL"             -o web/assets/player/CDDA_SciFi_Soldier_Generated.glb
+          curl -fL --retry 6 --retry-all-errors --retry-delay 2             "$SOURCE_URL"             -o web/assets/player/CDDA_SciFi_Soldier_Generated.glb
 
           test -s web/assets/player/CDDA_SciFi_Soldier_Generated.glb
 
           SIZE_BYTES="$(wc -c < web/assets/player/CDDA_SciFi_Soldier_Generated.glb)"
-          echo "Rigged GLB size: $SIZE_BYTES bytes"
+          echo "Cloud character size: $SIZE_BYTES bytes"
 
-          if [ "$SIZE_BYTES" -lt 200000 ]; then
-            echo "Rigged GLB is implausibly small; refusing to commit it."
+          if [ "$SIZE_BYTES" -lt 1000000 ]; then
+            echo "Character GLB is unexpectedly small; refusing to ship."
             exit 1
           fi
 
-          jq -n             --arg source "3DAssets.dev CC0 character + three.ws Make-It-Animatable"             --arg sourcePage "$SOURCE_PAGE"             --arg sourceUrl "$SOURCE_URL"             --arg riggedUrl "$RIG_URL"             '{
+          jq -n             --arg source "3DAssets.dev Gorgehold Scout"             --arg sourcePage "$SOURCE_PAGE"             --arg sourceUrl "$SOURCE_URL"             '{
               source: $source,
               sourcePage: $sourcePage,
               sourceUrl: $sourceUrl,
               sourceLicense: "CC0 1.0 Universal",
-              riggingProvider: "three.ws",
-              riggedUrl: $riggedUrl
-            }'             > web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json
+              skeleton: "74-joint",
+              animations: ["idle","walk","run","grasp"],
+              notes: "Cloud-acquired, self-contained GLB. No extra decoder required."
+            }' > web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json
 
-      - name: Commit cloud-rigged character
+      - name: Commit final character asset
         shell: bash
         run: |
           set -euo pipefail
@@ -117,10 +70,5 @@ jobs:
           git add -A web/assets/player/CDDA_SciFi_Soldier_Generated.glb
           git add -A web/assets/player/CDDA_SciFi_Soldier_Generated.metadata.json
 
-          if git diff --cached --quiet; then
-            echo "Character asset is unchanged; nothing to commit."
-            exit 0
-          fi
-
-          git commit -m "chore(character): add cloud-rigged tactical operator"
+          git commit -m "chore(character): install CC0 74-joint scout GLB"
           git push

@@ -2450,54 +2450,98 @@ function updateUpperBodyWeaponTemplate(dt,moving,sprint){
   }
 }
 
-async function loadProtoframePreview(){
-  if(!OBJLoader) return null;
+function buildProtoframePreview(){
+  // Deterministic low-poly Protoframe-style visual prototype.
+  // Built from Three.js primitives so the preview has zero external asset-loader
+  // dependency. Each armor section is its own Group for later replacement.
+  const root=new THREE.Group();
+  root.name='Warframe1999_Protoframe_ProceduralPreview';
 
-  try{
-    const objLoader=new OBJLoader();
-    if(MTLLoader){
-      try{
-        const mtlLoader=new MTLLoader();
-        const materials=await mtlLoader.loadAsync(
-          'assets/player/Warframe1999_Protoframe_LowPoly_v2.mtl'
-        );
-        materials.preload();
-        objLoader.setMaterials(materials);
-      }catch(err){
-        console.warn('Protoframe MTL preview failed; using fallback material:',err);
-      }
-    }
+  const armor=new THREE.MeshStandardMaterial({
+    color:0x343e40,metalness:.72,roughness:.34
+  });
+  const dark=new THREE.MeshStandardMaterial({
+    color:0x10161a,metalness:.64,roughness:.40
+  });
+  const accent=new THREE.MeshStandardMaterial({
+    color:0x70817f,metalness:.55,roughness:.28
+  });
+  const glass=new THREE.MeshStandardMaterial({
+    color:0x174852,emissive:0x082b32,emissiveIntensity:.75,
+    metalness:.18,roughness:.18
+  });
+  const skin=new THREE.MeshStandardMaterial({
+    color:0x8b5b49,metalness:.02,roughness:.72
+  });
+  const hair=new THREE.MeshStandardMaterial({
+    color:0x15191c,metalness:.08,roughness:.62
+  });
 
-    const root=await objLoader.loadAsync(
-      'assets/player/Warframe1999_Protoframe_LowPoly_v2.obj'
-    );
+  const part=(name,geo,mat,pos,scale=[1,1,1],rot=[0,0,0])=>{
+    const g=new THREE.Group();
+    g.name=name;
+    g.position.set(...pos);
+    g.rotation.set(...rot);
+    g.scale.set(...scale);
+    const mesh=new THREE.Mesh(geo,mat);
+    mesh.castShadow=true;
+    mesh.receiveShadow=true;
+    g.add(mesh);
+    root.add(g);
+    return g;
+  };
 
-    root.traverse(o=>{
-      if(!o.isMesh) return;
-      o.castShadow=true;
-      o.receiveShadow=true;
-      if(o.material){
-        o.material.side=THREE.FrontSide;
-        o.material.roughness=.42;
-        o.material.metalness=.52;
-      }
-    });
+  const chestGeo=new THREE.BoxGeometry(.92,.72,.54);
+  const plateGeo=new THREE.BoxGeometry(.70,.42,.11);
+  const limbGeo=new THREE.CapsuleGeometry(.14,.38,5,8);
+  const limbWideGeo=new THREE.CapsuleGeometry(.17,.42,5,8);
+  const bootGeo=new THREE.BoxGeometry(.38,.22,.50);
+  const shoulderGeo=new THREE.SphereGeometry(.22,8,6);
+  const helmetGeo=new THREE.SphereGeometry(.29,12,8);
+  const visorGeo=new THREE.BoxGeometry(.30,.12,.055);
 
-    const box=new THREE.Box3().setFromObject(root);
-    const size=box.getSize(new THREE.Vector3());
-    const desiredHeight=1.95;
-    const scale=desiredHeight/Math.max(size.y,.001);
-    root.scale.setScalar(scale);
+  part('Torso',chestGeo,armor,[0,1.08,.02],[1,1,1]);
+  part('ChestPlate',plateGeo,accent,[0,1.22,.31],[1,1,1]);
+  part('SpineCore',new THREE.BoxGeometry(.16,.42,.14),dark,[0,1.04,-.31]);
+  part('Waist',new THREE.BoxGeometry(.60,.24,.36),dark,[0,.70,.02]);
 
-    const scaledBox=new THREE.Box3().setFromObject(root);
-    root.position.y=-scaledBox.min.y;
+  part('ShoulderL',shoulderGeo,armor,[-.53,1.26,0],[1.12,.92,1.02]);
+  part('ShoulderR',shoulderGeo,armor,[.53,1.26,0],[1.12,.92,1.02]);
+  part('UpperArmL',limbWideGeo,dark,[-.66,.92,.01],[1,1.18,1],[0,0,-.12]);
+  part('UpperArmR',limbWideGeo,dark,[.66,.92,.01],[1,1.18,1],[0,0,.12]);
+  part('ForearmL',limbGeo,armor,[-.67,.58,.08],[1,1.12,1],[0,0,-.08]);
+  part('ForearmR',limbGeo,armor,[.67,.58,.08],[1,1.12,1],[0,0,.08]);
+  part('GauntletL',new THREE.BoxGeometry(.30,.22,.34),accent,[-.67,.34,.10],[1,1,1]);
+  part('GauntletR',new THREE.BoxGeometry(.30,.22,.34),accent,[.67,.34,.10],[1,1,1]);
 
-    root.name='Warframe1999_Protoframe_LowPoly_Preview';
-    return root;
-  }catch(err){
-    console.warn('Protoframe preview failed:',err);
-    return null;
-  }
+  part('Pelvis',new THREE.BoxGeometry(.92,.34,.44),armor,[0,.48,.06]);
+  part('HipBladeL',new THREE.BoxGeometry(.16,.50,.30),accent,[-.45,.56,.03],[1,1,1],[0,0,-.28]);
+  part('HipBladeR',new THREE.BoxGeometry(.16,.50,.30),accent,[.45,.56,.03],[1,1,1],[0,0,.28]);
+
+  part('ThighL',limbWideGeo,dark,[-.22,.16,.02],[1,1.28,1]);
+  part('ThighR',limbWideGeo,dark,[.22,.16,.02],[1,1.28,1]);
+  part('KneeL',new THREE.BoxGeometry(.34,.22,.32),accent,[-.22,-.13,.18]);
+  part('KneeR',new THREE.BoxGeometry(.34,.22,.32),accent,[.22,-.13,.18]);
+  part('ShinL',limbWideGeo,armor,[-.22,-.43,.02],[.95,1.35,.95]);
+  part('ShinR',limbWideGeo,armor,[.22,-.43,.02],[.95,1.35,.95]);
+  part('BootL',bootGeo,dark,[-.22,-.82,.13],[1,1,1]);
+  part('BootR',bootGeo,dark,[.22,-.82,.13],[1,1,1]);
+
+  // Human Protoframe-style head: exposed face + dark hair + armored neck.
+  part('Neck',new THREE.CylinderGeometry(.14,.16,.18,8),dark,[0,1.55,0]);
+  part('HumanHead',helmetGeo,skin,[0,1.82,.02],[.92,1.05,.92]);
+  part('Hair',new THREE.SphereGeometry(.30,12,8,0,Math.PI*2,0,Math.PI*.58),hair,[0,1.94,-.01],[1.02,.92,1.02]);
+  part('FaceVisor',visorGeo,glass,[0,1.82,.295],[1,1,1]);
+  part('JawArmor',new THREE.BoxGeometry(.38,.14,.26),dark,[0,1.67,.08],[1,1,1]);
+  part('HeadCrown',new THREE.BoxGeometry(.34,.16,.40),armor,[0,2.04,-.02],[1,1,1],[.08,0,0]);
+  part('BackFinL',new THREE.BoxGeometry(.10,.44,.16),dark,[-.24,1.30,-.28],[1,1,1],[.12,0,-.14]);
+  part('BackFinR',new THREE.BoxGeometry(.10,.44,.16),dark,[.24,1.30,-.28],[1,1,1],[-.12,0,.14]);
+
+  const box=new THREE.Box3().setFromObject(root);
+  const center=box.getCenter(new THREE.Vector3());
+  root.position.sub(center);
+  root.position.y += 0.92;
+  return root;
 }
 
 async function loadCharacter(){
@@ -2558,19 +2602,17 @@ async function loadCharacter(){
     player.add(characterRoot);
     characterRoot.updateMatrixWorld(true);
 
-    // A/B visual test: keep the original gameplay skeleton for movement,
-    // terrain, jump and the existing animation infrastructure, but replace
-    // its rendered body with the new Protoframe low-poly preview.
-    protoframePreviewRoot=await loadProtoframePreview();
-    if(protoframePreviewRoot){
-      characterRoot.traverse(o=>{
-        if(o.isMesh) o.visible=false;
-      });
-      protoframePreviewRoot.scale.multiplyScalar(1/Math.max(characterBaseScale,.0001));
-      characterRoot.add(protoframePreviewRoot);
-      protoframePreviewActive=true;
-      console.log('Protoframe visual preview active.');
-    }
+    // A/B visual test: preserve the existing gameplay skeleton and animation
+    // system, but replace only the rendered body with the deterministic
+    // Protoframe visual prototype.
+    protoframePreviewRoot=buildProtoframePreview();
+    characterRoot.traverse(o=>{
+      if(o.isMesh) o.visible=false;
+    });
+    protoframePreviewRoot.scale.multiplyScalar(1/Math.max(characterBaseScale,.0001));
+    characterRoot.add(protoframePreviewRoot);
+    protoframePreviewActive=true;
+    console.log('Protoframe visual preview active.');
 
     makeWeapon();
     if(protoframePreviewActive&&weaponRoot) weaponRoot.visible=false;

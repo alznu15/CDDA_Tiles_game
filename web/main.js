@@ -436,8 +436,8 @@ function addBuilding(x,z,w,d,h,mat){
   const styleIndex=Math.abs(Math.round(x*.13+z*.07))%3;
   if(styleIndex===1){
     const roofRun=(d*.5)+.34;
-    const rise=THREE.MathUtils.clamp(d*.11,.95,1.75);
-    const roofAngle=Math.atan2(rise,roofRun);
+    const roofAngle=THREE.MathUtils.degToRad(15);
+    const rise=Math.tan(roofAngle)*roofRun;
     const roofSlopeLength=Math.hypot(roofRun,rise);
     const roofY=h+(rise*.5)+.05;
     const roofA=box(w+.62,.30,roofSlopeLength,0,roofY,roofRun*.5,MAT.roof,g);
@@ -1616,10 +1616,10 @@ function buildMap(){
   addRoad(0,138,300,14);
 
   // Sidewalks follow both park and outer road rings.
-  addSidewalk(0,-74,164,4.5);
-  addSidewalk(0,74,164,4.5);
-  addSidewalk(-74,0,4.5,164);
-  addSidewalk(74,0,4.5,164);
+  addSidewalk(0,-74.1,164,4.5);
+  addSidewalk(0,74.1,164,4.5);
+  addSidewalk(-74.1,0,4.5,164);
+  addSidewalk(74.1,0,4.5,164);
   addSidewalk(0,-128,300,4);
   addSidewalk(0,128,300,4);
   addSidewalk(-128,0,4,300);
@@ -1765,9 +1765,9 @@ async function addStreetAssets(){
   if(!template) return;
 
   const points=[
-    [-78,-72],[-24,-78],[24,-78],[78,-72],
-    [-78,72],[-24,78],[24,78],[78,72],
-    [-78,-24],[-78,24],[78,-24],[78,24],
+    [-76,-72],[-24,-76],[24,-76],[76,-72],
+    [-76,72],[-24,76],[24,76],[76,72],
+    [-76,-24],[-76,24],[76,-24],[76,24],
     [-132,-108],[-132,108],[132,-108],[132,108]
   ];
 

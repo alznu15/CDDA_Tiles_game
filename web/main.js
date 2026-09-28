@@ -1883,6 +1883,30 @@ let lastShotTime=0;
 let fireAccumulator=0;
 let gunActions={};
 
+// CDDA_WEAPON_RIG_V2
+// Separate weapon socket system: rifle starts on the back, then transitions
+// into a hand-driven two-point grip without being parented to an arm mesh.
+let weaponState='holstered'; // holstered | drawing | equipped | holstering
+let weaponGraspAction=null;
+let weaponPoseWeight=0;
+const weaponTransition={
+  active:false,
+  target:'holstered',
+  startedAt:0,
+  duration:.72,
+  fromPosition:new THREE.Vector3(),
+  fromQuaternion:new THREE.Quaternion()
+};
+const weaponHolsterPosition=new THREE.Vector3(.30,1.27,-.30);
+const weaponHolsterEuler=new THREE.Euler(-.58,Math.PI,.14,'YXZ');
+const weaponHolsterQuaternion=new THREE.Quaternion().setFromEuler(weaponHolsterEuler);
+const weaponHandWorldPosition=new THREE.Vector3();
+const weaponHandWorldQuaternion=new THREE.Quaternion();
+const weaponBasis=new THREE.Matrix4();
+const weaponForward=new THREE.Vector3();
+const weaponRightAxis=new THREE.Vector3();
+const weaponUpAxis=new THREE.Vector3();
+
 function hideBuiltInWeapons(root){
   const hiddenNames=/^(ak|ak47|grenade|grenadelauncher|pistol|revolver|rocketlauncher|shortcannon|shotgun|shovel|smg|sniper|weapon|weapon_geometry)$/i;
   root.traverse(o=>{
@@ -1891,23 +1915,40 @@ function hideBuiltInWeapons(root){
 }
 
 function collectAimBones(){
-  aimBones={rightHand:null,leftHand:null,rightLowerArm:null,leftLowerArm:null};
-  const aliases={
-    rightHand:new Set(['hand_r','righthand','right_hand']),
-    leftHand:new Set(['hand_l','lefthand','left_hand']),
-    rightLowerArm:new Set(['lowerarm_r','rightlowerarm','right_lower_arm','forearm_r']),
-    leftLowerArm:new Set(['lowerarm_l','leftlowerarm','left_lower_arm','forearm_l'])
+  aimBones={
+    rightHand:null,leftHand:null,
+    rightLowerArm:null,leftLowerArm:null,
+    rightUpperArm:null,leftUpperArm:null
   };
+
+  const classify=(raw)=>{
+    const n=String(raw||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const right=n.includes('right')||n.endsWith('r');
+    const left=n.includes('left')||n.endsWith('l');
+    if((n.includes('hand')||n.includes('wrist')) && right) return 'rightHand';
+    if((n.includes('hand')||n.includes('wrist')) && left) return 'leftHand';
+    if((n.includes('lowerarm')||n.includes('forearm')) && right) return 'rightLowerArm';
+    if((n.includes('lowerarm')||n.includes('forearm')) && left) return 'leftLowerArm';
+    if(n.includes('upperarm') && right) return 'rightUpperArm';
+    if(n.includes('upperarm') && left) return 'leftUpperArm';
+    return null;
+  };
+
   characterRoot?.traverse(o=>{
     if(!o.isBone) return;
-    const key=(o.name||'').toLowerCase().replace(/[.:]/g,'');
-    if(aliases.rightHand.has(key)) aimBones.rightHand=o;
-    else if(aliases.leftHand.has(key)) aimBones.leftHand=o;
-    else if(aliases.rightLowerArm.has(key)) aimBones.rightLowerArm=o;
-    else if(aliases.leftLowerArm.has(key)) aimBones.leftLowerArm=o;
+    const role=classify(o.name);
+    if(role) aimBones[role]=o;
   });
-}
 
+  for(const side of ['right','left']){
+    const handKey=side+'Hand';
+    const forearm=aimBones[side+'LowerArm'];
+    if(!aimBones[handKey] && forearm){
+      const candidate=forearm.children.find(c=>c.isBone);
+      if(candidate) aimBones[handKey]=candidate;
+    }
+  }
+}
 function makeWeapon(){
   if(weaponInitialized||!characterRoot) return;
   weaponInitialized=true;
@@ -1921,8 +1962,12 @@ function makeWeapon(){
   weaponRoot.name='AR-01 Carbine';
   player.add(weaponRoot);
   weaponRoot.rotation.order='YXZ';
+  weaponRoot.scale.setScalar(.72);
 
   // Custom weapon forward is +Z, matching the player facing axis.
+  // Initial weapon state is a visible back-mounted rifle.
+  weaponRoot.position.copy(weaponHolsterPosition);
+  weaponRoot.quaternion.copy(weaponHolsterQuaternion);
   box(.34,.26,.82,0,0,-.05,metal,weaponRoot);
   box(.22,.19,.72,0,.02,.58,dark,weaponRoot);
   box(.12,.12,1.04,0,.02,1.28,metal,weaponRoot);
@@ -1976,32 +2021,164 @@ function getAimDirection(){
   return getRoleForward();
 }
 
+function smoothWeaponT(t){
+  const x=THREE.MathUtils.clamp(t,0,1);
+  return x*x*(3-2*x);
+}
+
+function getWeaponHolsterLocalPosition(out){
+  return out.copy(weaponHolsterPosition);
+}
+
+function getWeaponHandWorldPose(outPosition,outQuaternion){
+  if(!aimBones?.rightHand){
+    outPosition.copy(player.getWorldPosition(new THREE.Vector3())).add(
+      new THREE.Vector3(.02,1.24,.05).applyQuaternion(player.quaternion)
+    );
+    outQuaternion.copy(player.quaternion);
+    return false;
+  }
+
+  const rightHand=aimBones.rightHand.getWorldPosition(new THREE.Vector3());
+  const leftHand=aimBones.leftHand
+    ? aimBones.leftHand.getWorldPosition(new THREE.Vector3())
+    : rightHand.clone().add(getRoleForward().multiplyScalar(.46));
+
+  weaponForward.subVectors(leftHand,rightHand);
+  const bodyForward=getRoleForward();
+
+  if(weaponForward.lengthSq()<.0025){
+    weaponForward.copy(bodyForward);
+  }else{
+    weaponForward.normalize();
+    if(weaponForward.dot(bodyForward)<-.20) weaponForward.negate();
+  }
+
+  weaponRightAxis.crossVectors(new THREE.Vector3(0,1,0),weaponForward);
+  if(weaponRightAxis.lengthSq()<.001){
+    weaponRightAxis.set(1,0,0);
+  }else{
+    weaponRightAxis.normalize();
+  }
+  weaponUpAxis.crossVectors(weaponForward,weaponRightAxis).normalize();
+
+  weaponBasis.makeBasis(weaponRightAxis,weaponUpAxis,weaponForward);
+  outQuaternion.setFromRotationMatrix(weaponBasis);
+
+  const gripOffset=new THREE.Vector3(0,0,-.08).applyQuaternion(outQuaternion);
+  outPosition.copy(rightHand).sub(gripOffset);
+  return true;
+}
+
+function setWeaponWorldPose(worldPosition,worldQuaternion){
+  const localPosition=worldPosition.clone();
+  player.worldToLocal(localPosition);
+  weaponRoot.position.copy(localPosition);
+
+  const playerInverse=player.getWorldQuaternion(new THREE.Quaternion()).invert();
+  weaponRoot.quaternion.copy(playerInverse.multiply(worldQuaternion));
+}
+
+function setWeaponHolsteredPose(){
+  weaponRoot.position.copy(weaponHolsterPosition);
+  weaponRoot.quaternion.copy(weaponHolsterQuaternion);
+}
+
+function beginWeaponDraw(){
+  if(!weaponRoot||weaponState==='equipped'||weaponState==='drawing') return;
+  weaponTransition.active=true;
+  weaponTransition.target='equipped';
+  weaponTransition.startedAt=performance.now();
+  weaponTransition.duration=.72;
+  getWeaponHolsterLocalPosition(weaponTransition.fromPosition);
+  weaponTransition.fromQuaternion.copy(weaponHolsterQuaternion);
+  weaponState='drawing';
+}
+
+function beginWeaponHolster(){
+  if(!weaponRoot||weaponState==='holstered'||weaponState==='holstering') return;
+  weaponTransition.active=true;
+  weaponTransition.target='holstered';
+  weaponTransition.startedAt=performance.now();
+  weaponTransition.duration=.68;
+  getWeaponHandWorldPose(weaponHandWorldPosition,weaponHandWorldQuaternion);
+  const localStart=weaponHandWorldPosition.clone();
+  player.worldToLocal(localStart);
+  weaponTransition.fromPosition.copy(localStart);
+  const playerInverse=player.getWorldQuaternion(new THREE.Quaternion()).invert();
+  weaponTransition.fromQuaternion.copy(playerInverse.multiply(weaponHandWorldQuaternion));
+  weaponState='holstering';
+}
+
+function toggleWeapon(){
+  if(weaponState==='holstered') beginWeaponDraw();
+  else if(weaponState==='equipped') beginWeaponHolster();
+}
+
+function updateWeaponAnimation(dt){
+  let targetWeight=0;
+  if(weaponState==='equipped'){
+    targetWeight=1;
+  }else if(weaponState==='drawing'&&weaponTransition.active){
+    const p=(performance.now()-weaponTransition.startedAt)/weaponTransition.duration;
+    targetWeight=smoothWeaponT(p);
+  }else if(weaponState==='holstering'&&weaponTransition.active){
+    const p=(performance.now()-weaponTransition.startedAt)/weaponTransition.duration;
+    targetWeight=1-smoothWeaponT(p);
+  }
+
+  weaponPoseWeight=THREE.MathUtils.damp(weaponPoseWeight,targetWeight,18,dt);
+
+  if(weaponGraspAction){
+    weaponGraspAction.enabled=weaponPoseWeight>.001;
+    weaponGraspAction.setEffectiveWeight(weaponPoseWeight);
+    weaponGraspAction.time=weaponGraspAction.getClip().duration-.001;
+  }
+}
+
 function updateWeaponState(dt){
   if(weaponRoot){
-    let anchor;
-    if(aimBones?.rightHand){
-      anchor=aimBones.rightHand.getWorldPosition(new THREE.Vector3());
-      if(aimBones.leftHand){
-        const support=aimBones.leftHand.getWorldPosition(new THREE.Vector3());
-        anchor.lerp(support,.16);
+    if(weaponState==='holstered'){
+      setWeaponHolsteredPose();
+    }else if(weaponState==='equipped'){
+      getWeaponHandWorldPose(weaponHandWorldPosition,weaponHandWorldQuaternion);
+      setWeaponWorldPose(weaponHandWorldPosition,weaponHandWorldQuaternion);
+    }else if(weaponTransition.active){
+      const raw=(performance.now()-weaponTransition.startedAt)/weaponTransition.duration;
+      const p=smoothWeaponT(raw);
+
+      if(weaponState==='drawing'){
+        getWeaponHandWorldPose(weaponHandWorldPosition,weaponHandWorldQuaternion);
+        const targetLocal=weaponHandWorldPosition.clone();
+        player.worldToLocal(targetLocal);
+        const targetLocalQuaternion=player.getWorldQuaternion(new THREE.Quaternion()).invert()
+          .multiply(weaponHandWorldQuaternion);
+
+        weaponRoot.position.lerpVectors(weaponTransition.fromPosition,targetLocal,p);
+        weaponRoot.quaternion.copy(weaponTransition.fromQuaternion).slerp(targetLocalQuaternion,p);
+      }else{
+        weaponRoot.position.lerpVectors(weaponTransition.fromPosition,weaponHolsterPosition,p);
+        weaponRoot.quaternion.copy(weaponTransition.fromQuaternion).slerp(weaponHolsterQuaternion,p);
       }
-    }else{
-      anchor=player.getWorldPosition(new THREE.Vector3()).add(
-        new THREE.Vector3(.34,1.25,0).applyQuaternion(player.quaternion)
-      );
+
+      if(raw>=1){
+        weaponTransition.active=false;
+        if(weaponTransition.target==='equipped'){
+          weaponState='equipped';
+          getWeaponHandWorldPose(weaponHandWorldPosition,weaponHandWorldQuaternion);
+          setWeaponWorldPose(weaponHandWorldPosition,weaponHandWorldQuaternion);
+        }else{
+          weaponState='holstered';
+          setWeaponHolsteredPose();
+        }
+      }
     }
 
-    player.worldToLocal(anchor);
-    weaponRoot.position.copy(anchor);
-    weaponRoot.position.y-=.035;
-    weaponRoot.position.z-=recoilKick*.022;
-
-    // Never rotate the arm bones. The weapon direction comes only from player.
-    weaponRoot.quaternion.identity();
+    weaponRoot.position.z-=recoilKick*.018;
   }
 
   if(muzzleFlash){
-    muzzleFlash.visible=recoilKick>0.06;
+    muzzleFlash.visible=recoilKick>0.06&&weaponState!=='holstered';
     muzzleFlash.scale.setScalar(.75+recoilKick*.9);
   }
 
@@ -2010,7 +2187,6 @@ function updateWeaponState(dt){
   recoilYaw=THREE.MathUtils.damp(recoilYaw,0,12,dt);
   recoilPitch=THREE.MathUtils.damp(recoilPitch,0,12,dt);
 }
-
 function raycastStatic(origin,direction,maxDistance=260){
   cameraRay.origin.copy(origin);
   cameraRay.direction.copy(direction).normalize();
@@ -2064,6 +2240,10 @@ function spawnImpact(point){
 
 function fireWeapon(){
   if(!started||!weaponRoot) return;
+  if(weaponState!=='equipped'){
+    beginWeaponDraw();
+    return;
+  }
   const now=performance.now();
   if(now-lastShotTime<88||ammo<=0) return;
 
@@ -2083,6 +2263,41 @@ function fireWeapon(){
 
   const meta=document.querySelector('.weaponMeta');
   if(meta) meta.textContent='LMB FIRE • RMB AIM • '+ammo+' / ∞';
+}
+
+function buildWeaponGraspOverlay(clip){
+  if(!mixer||!clip) return null;
+
+  const upperBody=/shoulder|clavicle|upperarm|lowerarm|forearm|hand|wrist/i;
+  const excluded=/thigh|calf|shin|leg|foot|toe|pelvis|hip/i;
+  const tracks=clip.tracks.filter(t=>{
+    const name=String(t.name||'');
+    return upperBody.test(name)&&!excluded.test(name);
+  }).map(t=>t.clone());
+
+  if(!tracks.length) return null;
+
+  const overlayClip=clip.clone();
+  overlayClip.name='CDDA_Armed_UpperBody';
+  overlayClip.tracks=tracks;
+
+  try{
+    THREE.AnimationUtils.makeClipAdditive(overlayClip,0);
+  }catch(err){
+    console.warn('Could not build additive armed pose:',err);
+    return null;
+  }
+
+  const action=mixer.clipAction(overlayClip);
+  action.blendMode=THREE.AdditiveAnimationBlendMode;
+  action.setLoop(THREE.LoopOnce,1);
+  action.clampWhenFinished=true;
+  action.enabled=true;
+  action.weight=0;
+  action.time=Math.max(0,overlayClip.duration-.001);
+  action.paused=true;
+  action.play();
+  return action;
 }
 
 function chooseAnimation(base){
@@ -2191,6 +2406,11 @@ async function loadCharacter(){
       }
       return null;
     };
+
+    const graspActionSource=findClip(['grasp','grab','take_weapon','weapon_grab']);
+    weaponGraspAction=graspActionSource
+      ? buildWeaponGraspOverlay(graspActionSource.getClip())
+      : null;
 
     gunActions.Idle=gunActions.Idle||findClip(['idle_gun','idle_gun_pointing','idle_weapon'])||actions.Idle;
     gunActions.Walk=gunActions.Walk||findClip(['walk_gun','walk_weapon'])||actions.Walk;
@@ -2374,6 +2594,7 @@ function normalizeCode(e){
   if(e.key==='s'||e.key==='S') return 'KeyS';
   if(e.key==='d'||e.key==='D') return 'KeyD';
   if(e.key==='v'||e.key==='V') return 'KeyV';
+  if(e.key==='g'||e.key==='G') return 'KeyG';
   if(e.key==='Shift') return e.shiftKey ? 'ShiftLeft' : 'ShiftRight';
   if(e.key===' '||e.key==='Spacebar'||e.which===32||e.keyCode===32) return 'Space';
   return '';
@@ -2390,6 +2611,12 @@ function handleKeyDown(e){
   if(code==='KeyV'){
     shoulderSide*=-1;
     updateShoulderStatus();
+    e.preventDefault();
+    return;
+  }
+
+  if(code==='KeyG'){
+    toggleWeapon();
     e.preventDefault();
     return;
   }
@@ -2481,9 +2708,11 @@ addEventListener('contextmenu',e=>e.preventDefault());
 addEventListener('mousedown',e=>{
   if(!started) return;
   if(e.button===2){
+    beginWeaponDraw();
     input.aim=true;
     e.preventDefault();
   }else if(e.button===0){
+    beginWeaponDraw();
     input.fire=true;
     fireWeapon();
   }
@@ -2517,7 +2746,7 @@ const status=document.getElementById('status');
 function updateShoulderStatus(){
   if(!started) return;
   status.textContent=(shoulderSide>0?'SHOULDER: LEFT • ':'SHOULDER: RIGHT • ') +
-    'V SWITCH  •  WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  LMB FIRE • RMB AIM • MOUSE LOOK';
+    'V SWITCH  •  G DRAW/HOLSTER  •  WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  LMB FIRE • RMB AIM • MOUSE LOOK';
 }
 
 startButton.disabled=false;
@@ -2542,7 +2771,7 @@ renderer.domElement.addEventListener('pointermove',e=>{
 document.addEventListener('pointerlockchange',()=>{
   if(!started)return;
   status.textContent=document.pointerLockElement===renderer.domElement
-    ? ((shoulderSide>0?'SHOULDER: LEFT • ':'SHOULDER: RIGHT • ')+'V SWITCH  •  WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  LMB FIRE • RMB AIM • MOUSE LOOK')
+    ? ((shoulderSide>0?'SHOULDER: LEFT • ':'SHOULDER: RIGHT • ')+'V SWITCH  •  G DRAW/HOLSTER  •  WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  LMB FIRE • RMB AIM • MOUSE LOOK')
     : 'CLICK GAME TO LOCK MOUSE  •  V SWITCH SHOULDER  •  WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP • LMB FIRE • RMB AIM';
 });
 addEventListener('wheel',e=>{
@@ -2704,6 +2933,7 @@ function updatePlayer(dt,time){
   spawnRing.scale.setScalar(1.2-.2*ease);
   spawnRing.material.opacity=.72*(1-ease);
 
+  updateWeaponAnimation(dt);
   if(mixer) mixer.update(dt);
 
   const carousel=world.userData.carouselRide;
@@ -2865,5 +3095,11 @@ window.__GAME_STATE__=()=>({
   worldChildren:world.children.length,
   webgl2:renderer.capabilities.isWebGL2,
   shoulderSide,
-  shoulderLabel:shoulderSide>0?'left':'right'
+  shoulderLabel:shoulderSide>0?'left':'right',
+  weapon:{
+    state:weaponState,
+    transition:weaponTransition.active,
+    poseWeight:weaponPoseWeight,
+    ammo
+  }
 });

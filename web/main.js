@@ -78,7 +78,7 @@ const world = new THREE.Group();
 scene.add(world);
 const staticColliders = [];
 const walkableSurfaces = [];
-const terrainStepHeight = .6;
+const terrainStepHeight = .72;
 const terrainSnapRate = 18;
 
 const MAT = {
@@ -297,7 +297,7 @@ function addCentralFountain(){
   const sprayLife=new Float32Array(sprayCount);
   const sprayIndex=new Float32Array(sprayCount);
   for(let i=0;i<sprayCount;i++){
-    sprayLife[i]=Math.random();
+    sprayLife[i]=1;
     sprayIndex[i]=i%4;
   }
   const sprayGeometry=new THREE.BufferGeometry();
@@ -319,7 +319,7 @@ function addCentralFountain(){
   const coreVelocity=new Float32Array(coreCount*3);
   const coreLife=new Float32Array(coreCount);
   for(let i=0;i<coreCount;i++){
-    coreLife[i]=Math.random();
+    coreLife[i]=1;
   }
   const coreGeometry=new THREE.BufferGeometry();
   coreGeometry.setAttribute('position',new THREE.BufferAttribute(corePositions,3));
@@ -354,8 +354,8 @@ function addCentralFountain(){
 
   // The fountain is intentionally a walkable low step, not a visible ramp.
   // The player's foot animation + terrain smoothing handles the small height change.
-  const ringInner=4.45;
-  const ringOuter=5.25;
+  const ringInner=4.75;
+  const ringOuter=5.08;
   addWalkableSurface(
     0,0,ringOuter*2.2,ringOuter*2.2,.84,
     null,

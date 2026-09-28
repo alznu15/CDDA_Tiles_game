@@ -3289,9 +3289,74 @@ function __CDDA_restoreHeadPose(){
 }
 
 function __CDDA_applyWeaponPose(dt){
-  if(!weaponRoot||!characterRoot) return;
+  if(!weaponRoot) return;
 
-  if(!__CDDA_weaponRigReady && !__CDDA_refreshWeaponRig()) return;
+  // The weapon state machine must keep running even when the optional IK rig
+  // has not resolved its exact bone names yet. Otherwise a queued LMB shot
+  // can remain stuck forever in the "drawing" state.
+  const rigReady=!!characterRoot &&
+    (__CDDA_weaponRigReady || __CDDA_refreshWeaponRig());
+
+  // Hard guarantee: complete the timed draw/holster transition independently
+  // of IK availability, including the queued first shot.
+  if(weaponTransition.active){
+    const raw=(performance.now()-weaponTransition.startedAt)/weaponTransition.duration;
+    if(raw>=1){
+      weaponTransition.active=false;
+      if(weaponTransition.target==='equipped'){
+        weaponState='equipped';
+        if(fireQueued){
+          fireQueued=false;
+          fireWeapon();
+        }
+      }else{
+        weaponState='holstered';
+        __CDDA_aimPoseWeight=0;
+        fireQueued=false;
+      }
+    }
+  }
+
+  // IK can fail temporarily while assets/bones are being prepared, but that
+  // must never disable the weapon state machine or firing.
+  if(!rigReady){
+    const fallbackPosition=new THREE.Vector3();
+    const fallbackQuaternion=new THREE.Quaternion();
+    getWeaponHandWorldPose(fallbackPosition,fallbackQuaternion);
+
+    const fallbackLocal=fallbackPosition.clone();
+    player.worldToLocal(fallbackLocal);
+    const fallbackLocalQuaternion=player.getWorldQuaternion(new THREE.Quaternion())
+      .invert().multiply(fallbackQuaternion);
+
+    if(weaponState==='holstered'){
+      weaponRoot.position.copy(weaponHolsterPosition);
+      weaponRoot.quaternion.copy(weaponHolsterQuaternion);
+    }else if(weaponState==='equipped'){
+      weaponRoot.position.copy(fallbackLocal);
+      weaponRoot.quaternion.copy(fallbackLocalQuaternion);
+    }else if(weaponTransition.active){
+      const raw=THREE.MathUtils.clamp(
+        (performance.now()-weaponTransition.startedAt)/weaponTransition.duration,0,1
+      );
+      const p=smoothWeaponT(raw);
+      if(weaponState==='drawing'){
+        weaponRoot.position.lerpVectors(
+          weaponTransition.fromPosition,fallbackLocal,p
+        );
+        weaponRoot.quaternion.copy(weaponTransition.fromQuaternion)
+          .slerp(fallbackLocalQuaternion,p);
+      }else{
+        weaponRoot.position.lerpVectors(
+          weaponTransition.fromPosition,weaponHolsterPosition,p
+        );
+        weaponRoot.quaternion.copy(weaponTransition.fromQuaternion)
+          .slerp(weaponHolsterQuaternion,p);
+      }
+    }
+    return;
+  }
+
   characterRoot.updateMatrixWorld(true);
 
   let armBlend=1;

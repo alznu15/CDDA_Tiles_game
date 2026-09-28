@@ -195,6 +195,101 @@ function addTree(x,z,s=1){
   crown.position.y=5; crown.scale.y=1.15; crown.castShadow=true; crown.receiveShadow=true; g.add(crown);
 }
 
+function addCentralFountain(){
+  const g=new THREE.Group();
+  g.position.set(0,.25,0);
+  world.add(g);
+
+  const basinMat=new THREE.MeshStandardMaterial({color:0x59666b,roughness:.55,metalness:.3});
+  const trimMat=new THREE.MeshStandardMaterial({color:0xaec4c9,roughness:.32,metalness:.58});
+  const waterMat=new THREE.MeshStandardMaterial({
+    color:0x59cfe8,
+    roughness:.08,
+    metalness:.18,
+    transparent:true,
+    opacity:.78
+  });
+
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(5.3,5.7,.45,40),basinMat);
+  base.position.y=.23;
+  base.castShadow=true;
+  base.receiveShadow=true;
+  g.add(base);
+
+  const inner=new THREE.Mesh(new THREE.CylinderGeometry(4.55,4.75,.22,40),waterMat);
+  inner.position.y=.50;
+  inner.receiveShadow=true;
+  g.add(inner);
+
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(4.85,.17,10,48),trimMat);
+  ring.rotation.x=Math.PI/2;
+  ring.position.y=.64;
+  ring.castShadow=true;
+  g.add(ring);
+
+  const pedestal=new THREE.Mesh(new THREE.CylinderGeometry(1.15,1.42,1.6,20),trimMat);
+  pedestal.position.y=1.18;
+  pedestal.castShadow=true;
+  pedestal.receiveShadow=true;
+  g.add(pedestal);
+
+  const core=new THREE.Mesh(new THREE.SphereGeometry(.72,20,14),waterMat);
+  core.position.y=2.05;
+  core.castShadow=true;
+  g.add(core);
+
+  const jets=[];
+  for(const p of [[1.0,0],[0,1.0],[-1.0,0],[0,-1.0]]){
+    const jet=new THREE.Mesh(
+      new THREE.CylinderGeometry(.07,.15,1.2,10),
+      waterMat
+    );
+    jet.position.set(p[0],1.45,p[1]);
+    jet.castShadow=true;
+    g.add(jet);
+    jets.push(jet);
+  }
+
+  g.userData.jets=jets;
+  world.userData.fountain=g;
+  collider(0,0,5.8,5.8,.35,2.8);
+}
+
+function addPlazaFurniture(){
+  const benchMat=new THREE.MeshStandardMaterial({color:0x3b464b,roughness:.72,metalness:.25});
+  const seatMat=new THREE.MeshStandardMaterial({color:0x7c8d93,roughness:.62,metalness:.18});
+
+  for(const [x,z,rot] of [
+    [-8,0,Math.PI/2],[8,0,-Math.PI/2],[0,-8,0],[0,8,Math.PI]
+  ]){
+    const g=new THREE.Group();
+    g.position.set(x,.28,z);
+    g.rotation.y=rot;
+    world.add(g);
+    box(3.4,.22,.7,0,.2,0,seatMat,g);
+    box(2.7,.8,.18,0,-.25,-.25,benchMat,g);
+    box(.16,.45,.55,-1.2,-.1,.18,benchMat,g);
+    box(.16,.45,.55,1.2,-.1,.18,benchMat,g);
+  }
+
+  const planterMat=new THREE.MeshStandardMaterial({color:0x536067,roughness:.8});
+  const plantMat=new THREE.MeshStandardMaterial({color:0x365f42,roughness:1});
+  for(const [x,z] of [[-10,-10],[10,-10],[-10,10],[10,10]]){
+    const pot=new THREE.Mesh(new THREE.CylinderGeometry(.72,.82,.8,14),planterMat);
+    pot.position.set(x,.64,z);
+    pot.castShadow=true;
+    pot.receiveShadow=true;
+    world.add(pot);
+
+    const plant=new THREE.Mesh(new THREE.DodecahedronGeometry(1.1,1),plantMat);
+    plant.position.set(x,1.65,z);
+    plant.scale.y=1.15;
+    plant.castShadow=true;
+    plant.receiveShadow=true;
+    world.add(plant);
+  }
+}
+
 function buildMap(){
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(300,300),MAT.grass);
   ground.rotation.x=-Math.PI/2;
@@ -233,7 +328,11 @@ function buildMap(){
     [-22,-82],[22,-82],[-22,82],[22,82]
   ]) addTree(p[0],p[1],.9);
 
-  // The central plaza is open and traversable.
+  // Central landmark: a solid sci-fi fountain with a shallow basin and four animated water jets.
+  addCentralFountain();
+
+  // Small environmental details make the district feel inhabited without cluttering the traversal lanes.
+  addPlazaFurniture();
 }
 buildMap();
 
@@ -375,7 +474,9 @@ let cameraDistance=4.8;
 const cameraDistanceMin=3.2;
 const cameraDistanceMax=8.5;
 let cameraHeight=1.9;
-const cameraShoulder=1.05;
+let shoulderSide=1;
+const cameraShoulder=1.22;
+const cameraAimOffset=.95;
 const cameraCollisionRadius=.24;
 const cameraCollisionSkin=.16;
 const cameraMinClearance=1.45;
@@ -518,6 +619,7 @@ function normalizeCode(e){
   if(e.key==='a'||e.key==='A') return 'KeyA';
   if(e.key==='s'||e.key==='S') return 'KeyS';
   if(e.key==='d'||e.key==='D') return 'KeyD';
+  if(e.key==='v'||e.key==='V') return 'KeyV';
   if(e.key==='Shift') return e.shiftKey ? 'ShiftLeft' : 'ShiftRight';
   if(e.key===' '||e.key==='Spacebar'||e.which===32||e.keyCode===32) return 'Space';
   return '';
@@ -530,6 +632,13 @@ function requestJump(){
 
 function handleKeyDown(e){
   const code=normalizeCode(e);
+
+  if(code==='KeyV'){
+    shoulderSide*=-1;
+    updateShoulderStatus();
+    e.preventDefault();
+    return;
+  }
   recordInputEvent('keydown',e,code);
   updateInputDiagnostics();
 
@@ -633,6 +742,12 @@ const startButton=document.getElementById('start');
 const boot=document.getElementById('boot');
 const status=document.getElementById('status');
 
+function updateShoulderStatus(){
+  if(!started) return;
+  status.textContent=(shoulderSide>0?'SHOULDER: LEFT • ':'SHOULDER: RIGHT • ') +
+    'V SWITCH  •  WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  MOUSE LOOK';
+}
+
 startButton.disabled=false;
 document.getElementById('loading').textContent='Ready.';
 loadCharacter().catch(()=>{});
@@ -642,7 +757,7 @@ startButton.addEventListener('click',()=>{
   started=true;
   spawnTime=performance.now();
   boot.classList.add('hidden');
-  status.textContent='WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  MOUSE LOOK  •  ESC RELEASE';
+  updateShoulderStatus();
   lockMouse();
 });
 
@@ -655,8 +770,8 @@ renderer.domElement.addEventListener('pointermove',e=>{
 document.addEventListener('pointerlockchange',()=>{
   if(!started)return;
   status.textContent=document.pointerLockElement===renderer.domElement
-    ? 'WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  MOUSE LOOK  •  ESC RELEASE'
-    : 'CLICK GAME TO LOCK MOUSE  •  WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP';
+    ? ((shoulderSide>0?'SHOULDER: LEFT • ':'SHOULDER: RIGHT • ')+'V SWITCH  •  WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  MOUSE LOOK')
+    : 'CLICK GAME TO LOCK MOUSE  •  V SWITCH SHOULDER  •  WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP';
 });
 addEventListener('wheel',e=>{
   cameraDistance=THREE.MathUtils.clamp(cameraDistance+e.deltaY*.006,cameraDistanceMin,cameraDistanceMax);
@@ -750,6 +865,8 @@ function updatePlayer(dt,time){
   spawnRing.material.opacity=.72*(1-ease);
 
   if(mixer) mixer.update(dt);
+  const fountain=world.userData.fountain;
+  if(fountain){ /* reserved for future fountain animation */ }
   if(characterReady){
     if(sprintJump.active){
       const jumpAction=actions.Jump||actions.Run||actions.Idle;
@@ -812,7 +929,7 @@ function updateCamera(dt){
   ));
 
   const shoulderRight=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
-  desired.addScaledVector(shoulderRight,cameraShoulder);
+  desired.addScaledVector(shoulderRight,cameraShoulder*shoulderSide);
 
   const safeDistance=getCameraClearDistance(target,desired);
   if(safeDistance<desired.distanceTo(target)){
@@ -829,7 +946,7 @@ function updateCamera(dt){
 
   camera.position.lerp(desired,1-Math.pow(.001,dt));
 
-  const lookTarget=target.clone();
+  const lookTarget=target.clone().addScaledVector(shoulderRight,cameraAimOffset*shoulderSide);
   camera.lookAt(lookTarget);
 }
 
@@ -867,5 +984,7 @@ window.__GAME_STATE__=()=>({
   characterScale:characterRoot?characterRoot.scale.toArray():null,
   colliders:staticColliders.length,
   worldChildren:world.children.length,
-  webgl2:renderer.capabilities.isWebGL2
+  webgl2:renderer.capabilities.isWebGL2,
+  shoulderSide,
+  shoulderLabel:shoulderSide>0?'left':'right'
 });

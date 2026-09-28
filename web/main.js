@@ -221,17 +221,37 @@ function addCentralFountain(){
     metalness:.62
   });
   const poolMat=new THREE.MeshStandardMaterial({
-    color:0x15485a,
-    roughness:.16,
-    metalness:.2,
+    color:0x12576d,
+    roughness:.12,
+    metalness:.08,
+    transparent:true,
+    opacity:.72,
+    depthWrite:false
+  });
+  const waterMat=new THREE.MeshStandardMaterial({
+    color:0xbcefff,
+    emissive:0x194e61,
+    emissiveIntensity:.35,
+    roughness:.08,
+    metalness:.03,
     transparent:true,
     opacity:.82,
+    depthWrite:false
+  });
+  const waterBrightMat=new THREE.MeshStandardMaterial({
+    color:0xe6fbff,
+    emissive:0x2f8197,
+    emissiveIntensity:.42,
+    roughness:.05,
+    metalness:.02,
+    transparent:true,
+    opacity:.9,
     depthWrite:false
   });
   const glowMat=new THREE.MeshStandardMaterial({
     color:0x72e0f4,
     emissive:0x1b7992,
-    emissiveIntensity:1.6,
+    emissiveIntensity:1.55,
     roughness:.18,
     metalness:.2
   });
@@ -254,7 +274,6 @@ function addCentralFountain(){
   lowerTrim.castShadow=true;
   g.add(lowerTrim);
 
-  // Shallow pool only; the flowing water itself is represented by particles.
   const pool=new THREE.Mesh(
     new THREE.CylinderGeometry(4.72,4.78,.06,48),
     poolMat
@@ -289,93 +308,267 @@ function addCentralFountain(){
   pedestalGlow.position.y=1.42;
   g.add(pedestalGlow);
 
-  // Central particle orb: no solid water sphere.
-  const orbCount=110;
-  const orbPositions=new Float32Array(orbCount*3);
-  const orbBase=new Float32Array(orbCount*3);
-  const orbPhase=new Float32Array(orbCount);
-  const orbRadius=new Float32Array(orbCount);
-  for(let i=0;i<orbCount;i++){
-    const v=i*3;
-    const a=Math.random()*Math.PI*2;
-    const p=Math.acos(THREE.MathUtils.randFloatSpread(2));
-    const r=.52+Math.random()*.28;
-    orbBase[v]=Math.sin(p)*Math.cos(a)*r;
-    orbBase[v+1]=1.95+Math.cos(p)*r*.72;
-    orbBase[v+2]=Math.sin(p)*Math.sin(a)*r;
-    orbPhase[i]=Math.random()*Math.PI*2;
-    orbRadius[i]=.65+Math.random()*.55;
-    orbPositions[v]=orbBase[v];
-    orbPositions[v+1]=orbBase[v+1];
-    orbPositions[v+2]=orbBase[v+2];
-  }
-  const orbGeometry=new THREE.BufferGeometry();
-  orbGeometry.setAttribute('position',new THREE.BufferAttribute(orbPositions,3));
-  const orbMaterial=new THREE.PointsMaterial({
-    color:0x9ff4ff,
-    size:.075,
-    transparent:true,
-    opacity:.78,
-    depthWrite:false,
-    sizeAttenuation:true
-  });
-  const orbParticles=new THREE.Points(orbGeometry,orbMaterial);
-  g.add(orbParticles);
+  // ------------------------------------------------------------
+  // Water is particle-only. There is no solid water stream mesh.
+  // The visual language follows mature fountain particle systems:
+  // emitter -> velocity -> gravity -> lifetime -> respawn.
+  // ------------------------------------------------------------
+  const dropletGeometry=new THREE.SphereGeometry(1,7,5);
 
-  // Four particle water streams descend from the center toward the pool.
-  const flowCount=220;
-  const flowPositions=new Float32Array(flowCount*3);
-  const flowPhase=new Float32Array(flowCount);
-  const flowLane=new Float32Array(flowCount);
-  const flowRadius=new Float32Array(flowCount);
-  for(let i=0;i<flowCount;i++){
-    flowPhase[i]=Math.random();
-    flowLane[i]=i%4;
-    flowRadius[i]=Math.random();
-  }
-  const flowGeometry=new THREE.BufferGeometry();
-  flowGeometry.setAttribute('position',new THREE.BufferAttribute(flowPositions,3));
-  const flowMaterial=new THREE.PointsMaterial({
-    color:0x79e7fb,
-    size:.052,
-    transparent:true,
-    opacity:.72,
-    depthWrite:false,
-    sizeAttenuation:true
-  });
-  const flowParticles=new THREE.Points(flowGeometry,flowMaterial);
-  g.add(flowParticles);
+  function createParticleSystem(count,material,config){
+    const mesh=new THREE.InstancedMesh(dropletGeometry,material,count);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled=false;
+    g.add(mesh);
 
-  // Small free droplets around the stream edges.
-  const dropletCount=90;
-  const dropletPositions=new Float32Array(dropletCount*3);
-  const dropletPhase=new Float32Array(dropletCount);
-  const dropletVelocity=new Float32Array(dropletCount*3);
-  for(let i=0;i<dropletCount;i++){
-    dropletPhase[i]=Math.random();
-  }
-  const dropletGeometry=new THREE.BufferGeometry();
-  dropletGeometry.setAttribute('position',new THREE.BufferAttribute(dropletPositions,3));
-  const dropletMaterial=new THREE.PointsMaterial({
-    color:0xc2f8ff,
-    size:.045,
-    transparent:true,
-    opacity:.65,
-    depthWrite:false,
-    sizeAttenuation:true
-  });
-  const dropletParticles=new THREE.Points(dropletGeometry,dropletMaterial);
-  g.add(dropletParticles);
+    const positions=new Float32Array(count*3);
+    const velocities=new Float32Array(count*3);
+    const ages=new Float32Array(count);
+    const lives=new Float32Array(count);
+    const sizes=new Float32Array(count);
+    const seeds=new Float32Array(count*4);
+    const dummy=new THREE.Object3D();
+    const up=new THREE.Vector3(0,1,0);
+    const dir=new THREE.Vector3();
 
-  // Bottom-only ripple: keep the readable water impact.
+    const system={mesh,positions,velocities,ages,lives,sizes,seeds,dummy,up,dir,config};
+
+    function reset(i,initial=false){
+      const v=i*3;
+      const s=i*4;
+      const a=Math.random()*Math.PI*2;
+      const ringBias=Math.random();
+      const startR=config.startRadius
+        ? config.startRadius[0]+Math.random()*(config.startRadius[1]-config.startRadius[0])
+        : 0;
+
+      let x,y,z;
+      if(config.spawnMode==='orb'){
+        const phi=Math.acos(THREE.MathUtils.randFloatSpread(2));
+        const r=.18+Math.random()*.48;
+        x=Math.sin(phi)*Math.cos(a)*r;
+        y=config.spawnY+(Math.cos(phi)*r*.72);
+        z=Math.sin(phi)*Math.sin(a)*r;
+      }else if(config.spawnMode==='impact'){
+        const r=startR;
+        x=Math.cos(a)*r;
+        y=config.spawnY+Math.random()*.025;
+        z=Math.sin(a)*r;
+      }else{
+        const r=startR;
+        x=Math.cos(a)*r;
+        y=config.spawnY+(Math.random()-.5)*config.spawnSpreadY;
+        z=Math.sin(a)*r;
+      }
+
+      positions[v]=x;
+      positions[v+1]=y;
+      positions[v+2]=z;
+
+      const speedOut=config.speedOut[0]+Math.random()*(config.speedOut[1]-config.speedOut[0]);
+      const speedY=config.speedY[0]+Math.random()*(config.speedY[1]-config.speedY[0]);
+      const tangent=(Math.random()-.5)*config.tangent;
+      velocities[v]=Math.cos(a)*speedOut + Math.cos(a+Math.PI*.5)*tangent;
+      velocities[v+1]=speedY;
+      velocities[v+2]=Math.sin(a)*speedOut + Math.sin(a+Math.PI*.5)*tangent;
+
+      ages[i]=initial ? Math.random()*(config.life[0]+(config.life[1]-config.life[0])) : 0;
+      lives[i]=config.life[0]+Math.random()*(config.life[1]-config.life[0]);
+      sizes[i]=config.size[0]+Math.random()*(config.size[1]-config.size[0]);
+
+      seeds[s]=Math.random();
+      seeds[s+1]=Math.random();
+      seeds[s+2]=Math.random();
+      seeds[s+3]=ringBias;
+    }
+
+    for(let i=0;i<count;i++) reset(i,true);
+
+    return {
+      system,
+      reset,
+      update(dt){
+        for(let i=0;i<count;i++){
+          if(ages[i]>=lives[i]){
+            reset(i,false);
+          }
+
+          const v=i*3;
+          ages[i]+=dt;
+
+          positions[v]+=velocities[v]*dt;
+          positions[v+1]+=velocities[v+1]*dt;
+          positions[v+2]+=velocities[v+2]*dt;
+
+          velocities[v]+=config.windX*dt;
+          velocities[v+1]+=config.gravity*dt;
+          velocities[v+2]+=config.windZ*dt;
+
+          const lifeT=THREE.MathUtils.clamp(ages[i]/lives[i],0,1);
+          const fadeIn=Math.min(1,ages[i]*14);
+          const fadeOut=Math.min(1,(1-lifeT)*10);
+          const visibility=fadeIn*fadeOut;
+
+          const vx=velocities[v];
+          const vy=velocities[v+1];
+          const vz=velocities[v+2];
+          const speed=Math.sqrt(vx*vx+vy*vy+vz*vz);
+          dir.set(vx,vy,vz);
+          if(dir.lengthSq()>1e-6) dir.normalize();
+
+          dummy.position.set(
+            positions[v],
+            positions[v+1],
+            positions[v+2]
+          );
+          dummy.quaternion.setFromUnitVectors(up,dir);
+
+          const baseSize=sizes[i]*(.72+.28*visibility);
+          const stretch=config.stretchBase + Math.min(config.stretchMax, speed*config.stretchSpeed);
+          dummy.scale.set(
+            baseSize,
+            baseSize*stretch,
+            baseSize
+          );
+          dummy.updateMatrix();
+          mesh.setMatrixAt(i,dummy.matrix);
+
+          // Kill particles as soon as they visibly reach the pool surface.
+          if(config.killBelow!==undefined && positions[v+1]<=config.killBelow){
+            ages[i]=lives[i];
+          }
+        }
+        mesh.instanceMatrix.needsUpdate=true;
+      }
+    };
+  }
+
+  // Dense main fountain: large droplets travel on wide ballistic arcs.
+  const main=createParticleSystem(
+    520,
+    waterMat,
+    {
+      spawnMode:'emitter',
+      spawnY:2.18,
+      spawnSpreadY:.18,
+      startRadius:[.08,.48],
+      speedOut:[1.7,3.75],
+      speedY:[3.9,5.15],
+      tangent:.55,
+      gravity:-7.9,
+      windX:.035,
+      windZ:-.025,
+      life:[1.18,1.72],
+      size:[.028,.065],
+      stretchBase:1.15,
+      stretchMax:2.9,
+      stretchSpeed:.32,
+      killBelow:.62
+    }
+  );
+
+  // Near-core curtain: this fills the section directly under the water orb
+  // so the fountain does not look like isolated bullet points.
+  const inner=createParticleSystem(
+    300,
+    waterBrightMat,
+    {
+      spawnMode:'orb',
+      spawnY:2.16,
+      spawnSpreadY:.08,
+      startRadius:[.15,.42],
+      speedOut:[.25,1.45],
+      speedY:[1.4,2.7],
+      tangent:.25,
+      gravity:-5.7,
+      windX:.015,
+      windZ:-.01,
+      life:[.62,1.05],
+      size:[.022,.052],
+      stretchBase:1.2,
+      stretchMax:3.8,
+      stretchSpeed:.38,
+      killBelow:.7
+    }
+  );
+
+  // Impact spray: secondary droplets are emitted from the pool edge where
+  // the main arcs arrive, giving the landing point some physical response.
+  const splash=createParticleSystem(
+    190,
+    waterBrightMat,
+    {
+      spawnMode:'impact',
+      spawnY:.62,
+      spawnSpreadY:.02,
+      startRadius:[2.85,4.45],
+      speedOut:[.18,.9],
+      speedY:[.35,1.45],
+      tangent:.22,
+      gravity:-5.2,
+      windX:.02,
+      windZ:-.015,
+      life:[.35,.78],
+      size:[.018,.045],
+      stretchBase:1.1,
+      stretchMax:2.8,
+      stretchSpeed:.34,
+      killBelow:.53
+    }
+  );
+
+  // A soft mist layer uses point sprites rather than hard geometric spheres.
+  const mistPositions=new Float32Array(150*3);
+  const mistPhase=new Float32Array(150);
+  const mistGeometry=new THREE.BufferGeometry();
+  mistGeometry.setAttribute('position',new THREE.BufferAttribute(mistPositions,3));
+  const mistMaterial=new THREE.PointsMaterial({
+    color:0xd9f9ff,
+    size:.08,
+    transparent:true,
+    opacity:.23,
+    depthWrite:false,
+    sizeAttenuation:true,
+    blending:THREE.NormalBlending
+  });
+  const mist=new THREE.Points(mistGeometry,mistMaterial);
+  g.add(mist);
+  for(let i=0;i<mistPhase.length;i++) mistPhase[i]=Math.random();
+
+  // Particle-only central water "orb": a dense swarm of droplets rather than
+  // one obvious glowing ball.
+  const orbParticleSystem=createParticleSystem(
+    180,
+    waterBrightMat,
+    {
+      spawnMode:'orb',
+      spawnY:2.28,
+      spawnSpreadY:.04,
+      startRadius:[.4,.62],
+      speedOut:[0,0],
+      speedY:[0,0],
+      tangent:0,
+      gravity:0,
+      windX:0,
+      windZ:0,
+      life:[999,999],
+      size:[.022,.05],
+      stretchBase:1,
+      stretchMax:1.05,
+      stretchSpeed:0,
+      killBelow:-999
+    }
+  );
+
+  // Bottom ripples: readable and deliberately retained.
   const ripples=[];
-  for(let i=0;i<5;i++){
+  for(let i=0;i<7;i++){
     const ripple=new THREE.Mesh(
-      new THREE.TorusGeometry(.85+i*.45,.035,6,32),
+      new THREE.TorusGeometry(.48+i*.46,.026+i*.002,6,36),
       new THREE.MeshBasicMaterial({
         color:0xbaf5ff,
         transparent:true,
-        opacity:.42,
+        opacity:.4,
         depthWrite:false,
         side:THREE.DoubleSide
       })
@@ -384,6 +577,25 @@ function addCentralFountain(){
     ripple.position.y=.595;
     g.add(ripple);
     ripples.push(ripple);
+  }
+
+  // Small impact rings distributed around the landing area.
+  const impactRipples=[];
+  for(let i=0;i<5;i++){
+    const ripple=new THREE.Mesh(
+      new THREE.TorusGeometry(.16,.018,5,28),
+      new THREE.MeshBasicMaterial({
+        color:0xe4fbff,
+        transparent:true,
+        opacity:.3,
+        depthWrite:false,
+        side:THREE.DoubleSide
+      })
+    );
+    ripple.rotation.x=Math.PI/2;
+    ripple.position.y=.604;
+    g.add(ripple);
+    impactRipples.push(ripple);
   }
 
   // Broad, low top surface. The player is meant to step onto this naturally;
@@ -399,29 +611,75 @@ function addCentralFountain(){
     }
   );
 
-  // Keep the inner pool inaccessible, but leave enough rim width for the
-  // player's radius to stand on the top and step up naturally.
   circleCollider(0,0,stepInner,.92);
 
-  const light=new THREE.PointLight(0x76eaff,2.0,12,2);
-  light.position.set(0,2.1,0);
+  const light=new THREE.PointLight(0x76eaff,2.1,13,2);
+  light.position.set(0,2.25,0);
   g.add(light);
 
-  g.userData.orbParticles=orbParticles;
-  g.userData.orbPositions=orbPositions;
-  g.userData.orbBase=orbBase;
-  g.userData.orbPhase=orbPhase;
-  g.userData.orbRadius=orbRadius;
-  g.userData.flowParticles=flowParticles;
-  g.userData.flowPositions=flowPositions;
-  g.userData.flowPhase=flowPhase;
-  g.userData.flowLane=flowLane;
-  g.userData.flowRadius=flowRadius;
-  g.userData.dropletParticles=dropletParticles;
-  g.userData.dropletPositions=dropletPositions;
-  g.userData.dropletPhase=dropletPhase;
-  g.userData.dropletVelocity=dropletVelocity;
-  g.userData.ripples=ripples;
+  const systems=[main,inner,splash];
+  g.userData.waterSystems=systems;
+  g.userData.orbSystem=orbParticleSystem;
+
+  g.userData.updateParticles=(dt,time)=>{
+    main.update(dt);
+    inner.update(dt);
+    splash.update(dt);
+
+    // Slowly swirl the central particle mass. It stays tight enough to read
+    // as a source of water without becoming a solid sphere.
+    const orbSys=orbParticleSystem.system;
+    for(let i=0;i<orbSys.mesh.count;i++){
+      const v=i*3;
+      const seed=orbSys.seeds[i*4];
+      const ang=time*.0009*(.65+seed*.35)+seed*Math.PI*2;
+      const baseX=orbSys.positions[v];
+      const baseY=orbSys.positions[v+1];
+      const baseZ=orbSys.positions[v+2];
+      const pulse=1+.055*Math.sin(time*.002+seed*7);
+      const x=baseX*pulse;
+      const z=baseZ*pulse;
+      orbSys.positions[v]=x*Math.cos(ang)-z*Math.sin(ang);
+      orbSys.positions[v+2]=x*Math.sin(ang)+z*Math.cos(ang);
+      orbSys.positions[v+1]=baseY+.04*Math.sin(time*.0025+seed*11);
+      orbSys.dummy.position.set(orbSys.positions[v],orbSys.positions[v+1],orbSys.positions[v+2]);
+      orbSys.dummy.rotation.set(0,ang,0);
+      orbSys.dummy.scale.setScalar(orbSys.sizes[i]);
+      orbSys.dummy.updateMatrix();
+      orbSys.mesh.setMatrixAt(i,orbSys.dummy.matrix);
+    }
+    orbSys.mesh.instanceMatrix.needsUpdate=true;
+
+    const mistAttr=mist.geometry.attributes.position;
+    for(let i=0;i<mistPhase.length;i++){
+      const v=i*3;
+      const p=(mistPhase[i]+time*.00022*(.7+(i%5)*.08))%1;
+      const a=mistPhase[i]*Math.PI*13.0+time*.00011;
+      const r=.35+p*3.85;
+      const y=.72 + Math.sin(p*Math.PI)*.55 + (1-p)*.85;
+      mistPositions[v]=Math.cos(a)*r;
+      mistPositions[v+1]=y;
+      mistPositions[v+2]=Math.sin(a)*r;
+    }
+    mistAttr.needsUpdate=true;
+
+    ripples.forEach((r,i)=>{
+      const t=(time*.00036+i*.12)%1;
+      r.scale.setScalar(.62+t*2.35);
+      r.material.opacity=.42*(1-t)*(i===0?.9:1);
+    });
+
+    impactRipples.forEach((r,i)=>{
+      const t=(time*.00105+i*.21)%1;
+      const a=time*.00015+i*1.256;
+      const radius=2.8+(i%3)*.58;
+      r.position.x=Math.cos(a)*radius;
+      r.position.z=Math.sin(a)*radius;
+      r.scale.setScalar(.6+t*2.5);
+      r.material.opacity=.34*(1-t);
+    });
+  };
+
   g.userData.pool=pool;
   g.userData.coreRing=pedestalGlow;
   world.userData.fountain=g;
@@ -1091,83 +1349,9 @@ function updatePlayer(dt,time){
 
   const fountain=world.userData.fountain;
   if(fountain){
-    const cycle=time*.003;
-
-    const orbPos=fountain.userData.orbPositions;
-    const orbBase=fountain.userData.orbBase;
-    const orbPhase=fountain.userData.orbPhase;
-    const orbRadius=fountain.userData.orbRadius;
-    const orbAttr=fountain.userData.orbParticles.geometry.attributes.position;
-
-    for(let i=0;i<orbPhase.length;i++){
-      const v=i*3;
-      const pulse=1+.08*Math.sin(cycle*2.4+orbPhase[i]);
-      const swirl=cycle*.45+orbPhase[i];
-      const x=orbBase[v]*pulse;
-      const y=orbBase[v+1]+.08*Math.sin(swirl*1.7);
-      const z=orbBase[v+2]*pulse;
-      const cs=Math.cos(cycle*.45);
-      const sn=Math.sin(cycle*.45);
-      orbPos[v]=x*cs-z*sn;
-      orbPos[v+1]=y;
-      orbPos[v+2]=x*sn+z*cs;
-    }
-    orbAttr.needsUpdate=true;
-
-    const flowPos=fountain.userData.flowPositions;
-    const flowPhase=fountain.userData.flowPhase;
-    const flowLane=fountain.userData.flowLane;
-    const flowRadius=fountain.userData.flowRadius;
-    const flowAttr=fountain.userData.flowParticles.geometry.attributes.position;
-
-    for(let i=0;i<flowPhase.length;i++){
-      const v=i*3;
-      const t=(flowPhase[i]+cycle*.85+((i*17)%13)*.002)%1;
-      const lane=flowLane[i];
-      const laneAngle=lane*(Math.PI/2)+Math.sin(cycle*1.7+i)*.05;
-      const radius=.25+flowRadius[i]*.34;
-      const fall=1.86-(t*t)*1.34;
-      const wobble=.07*Math.sin(cycle*2.8+i*1.31);
-      flowPos[v]=Math.cos(laneAngle)*radius+wobble;
-      flowPos[v+1]=fall;
-      flowPos[v+2]=Math.sin(laneAngle)*radius+wobble*.6;
-    }
-    flowAttr.needsUpdate=true;
-
-    const dropPos=fountain.userData.dropletPositions;
-    const dropPhase=fountain.userData.dropletPhase;
-    const dropVel=fountain.userData.dropletVelocity;
-    const dropAttr=fountain.userData.dropletParticles.geometry.attributes.position;
-
-    for(let i=0;i<dropPhase.length;i++){
-      const v=i*3;
-      let t=(dropPhase[i]+cycle*1.15+((i*11)%17)*.004)%1;
-      if(t<.025){
-        const a=Math.random()*Math.PI*2;
-        const spread=.3+Math.random()*.5;
-        dropPos[v]=Math.cos(a)*spread;
-        dropPos[v+1]=1.72+Math.random()*.42;
-        dropPos[v+2]=Math.sin(a)*spread;
-        dropVel[v]=Math.cos(a)*(.15+Math.random()*.45);
-        dropVel[v+1]=.15+Math.random()*.5;
-        dropVel[v+2]=Math.sin(a)*(.15+Math.random()*.45);
-      }else{
-        dropPos[v]+=dropVel[v]*dt;
-        dropPos[v+1]+=dropVel[v+1]*dt;
-        dropPos[v+2]+=dropVel[v+2]*dt;
-        dropVel[v+1]-=1.65*dt;
-      }
-    }
-    dropAttr.needsUpdate=true;
-
-    fountain.userData.ripples.forEach((r,i)=>{
-      const t=(cycle*.48+i*.19)%1;
-      r.scale.setScalar(.55+t*1.9);
-      r.material.opacity=.42*(1-t);
-    });
-
-    fountain.userData.coreRing.rotation.z=cycle*.55;
-    fountain.userData.pool.rotation.y=cycle*.05;
+    fountain.userData.updateParticles(dt, time);
+    fountain.userData.coreRing.rotation.z=time*.00055;
+    fountain.userData.pool.rotation.y=time*.00005;
   }
 
   if(characterReady){

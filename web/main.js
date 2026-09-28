@@ -81,6 +81,33 @@ const walkableSurfaces = [];
 const terrainStepHeight = .82;
 const terrainSnapRate = 18;
 
+const TEXTURE_CDN='https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/';
+const textureLoader=new THREE.TextureLoader();
+textureLoader.setCrossOrigin('anonymous');
+
+function bindPBR(material,slug,repeatX=4,repeatY=4,normalScale=.45){
+  const load=(suffix,isColor=false)=>{
+    const tex=textureLoader.load(
+      TEXTURE_CDN+slug+'/'+slug+'_'+suffix+'_1k.jpg',
+      ()=>{ material.needsUpdate=true; },
+      undefined,
+      ()=>{ console.warn('PBR texture failed:',slug,suffix); }
+    );
+    tex.wrapS=THREE.RepeatWrapping;
+    tex.wrapT=THREE.RepeatWrapping;
+    tex.repeat.set(repeatX,repeatY);
+    const maxAniso=textureLoader.manager ? Math.min(renderer.capabilities.getMaxAnisotropy?.()||1,8) : 1;
+    tex.anisotropy=maxAniso;
+    if(isColor) tex.colorSpace=THREE.SRGBColorSpace;
+    return tex;
+  };
+  material.map=load('diff',true);
+  material.normalMap=load('nor_gl');
+  material.roughnessMap=load('rough');
+  material.normalScale.set(normalScale,normalScale);
+  material.needsUpdate=true;
+}
+
 const MAT = {
   grass:new THREE.MeshStandardMaterial({color:0x55745a,roughness:1}),
   soil:new THREE.MeshStandardMaterial({color:0x6d5a46,roughness:1}),
@@ -92,11 +119,20 @@ const MAT = {
   buildingB:new THREE.MeshStandardMaterial({color:0x7c96a3,roughness:.91}),
   buildingC:new THREE.MeshStandardMaterial({color:0x8d6e61,roughness:.94}),
   roof:new THREE.MeshStandardMaterial({color:0x3a4145,roughness:.97}),
-  glass:new THREE.MeshStandardMaterial({color:0x8dc0d0,roughness:.14,metalness:.12}),
+  glass:new THREE.MeshPhysicalMaterial({color:0x8dc0d0,roughness:.11,metalness:.16,transparent:true,opacity:.76,transmission:.1,ior:1.45,thickness:.03,clearcoat:.55,clearcoatRoughness:.12}),
   metal:new THREE.MeshStandardMaterial({color:0x657078,roughness:.48,metalness:.65}),
   green:new THREE.MeshStandardMaterial({color:0x2f5536,roughness:1}),
   trunk:new THREE.MeshStandardMaterial({color:0x584536,roughness:1})
 };
+
+bindPBR(MAT.road,'asphalt_07',7,28,.38);
+bindPBR(MAT.curb,'concrete_pavement_02',4,18,.55);
+bindPBR(MAT.concrete,'concrete_pavement_03',5,5,.5);
+bindPBR(MAT.buildingA,'plastered_wall_02',5,4,.34);
+bindPBR(MAT.buildingB,'concrete',4,4,.42);
+bindPBR(MAT.buildingC,'brick_wall_001',5,5,.52);
+bindPBR(MAT.roof,'bitumen',4,4,.45);
+bindPBR(MAT.trunk,'bark_brown_01',2.2,4.2,.7);
 
 const box = (sx,sy,sz,x,y,z,mat,parent=world) => {
   const m = new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),mat);
@@ -172,6 +208,15 @@ function addRoad(x,z,w,d) {
 function addSidewalk(x,z,w,d){
   box(w,.18,d,x,.16,z,MAT.curb);
   addWalkableSurface(x,z,w,d,.25);
+
+  const horizontal=w>d;
+  const edge=horizontal
+    ? new THREE.Mesh(new THREE.BoxGeometry(w,.12,.08),MAT.metal)
+    : new THREE.Mesh(new THREE.BoxGeometry(.08,.12,d),MAT.metal);
+  edge.position.set(x,.25,z);
+  edge.castShadow=true;
+  edge.receiveShadow=true;
+  world.add(edge);
 }
 
 function addBuilding(x,z,w,d,h,mat){
@@ -180,30 +225,116 @@ function addBuilding(x,z,w,d,h,mat){
   world.add(g);
 
   box(w,h,d,0,h/2,0,mat,g);
-  box(w+.5,.55,d+.5,0,h+.27,0,MAT.roof,g);
+  box(w+.42,.5,d+.42,0,h+.25,0,MAT.roof,g);
 
-  const frontZ = d/2+.035;
-  const backZ = -d/2-.035;
-  const rows = Math.max(2,Math.floor(w/4.2));
-  for(let i=0;i<rows;i++){
-    const px = -w/2 + 2.3 + i*4.2;
-    if(px>w/2-1.4) continue;
-    box(1.8,1.35,.08,px,Math.min(h-1.5, h*.62),frontZ,MAT.glass,g);
-    if(i%2===0) box(1.8,1.35,.08,px,Math.min(h-1.5, h*.62),backZ,MAT.glass,g);
+  const frontZ=d/2+.035;
+  const backZ=-d/2-.035;
+  const rows=Math.max(2,Math.floor(w/4.2));
+  const windowRows=h>=10?2:1;
+
+  const frameMat=new THREE.MeshStandardMaterial({
+    color:0x253037,
+    roughness:.4,
+    metalness:.7
+  });
+  const sillMat=new THREE.MeshStandardMaterial({
+    color:0x8d989a,
+    roughness:.58,
+    metalness:.28
+  });
+  const doorMat=new THREE.MeshStandardMaterial({
+    color:0x30383d,
+    roughness:.46,
+    metalness:.42
+  });
+  const darkInsetMat=new THREE.MeshStandardMaterial({
+    color:0x13232b,
+    roughness:.3,
+    metalness:.32
+  });
+
+  const addWindow=(px,py,pz,rotY)=>{
+    const inset=box(1.96,1.5,.06,px,py,pz,darkInsetMat,g);
+    inset.rotation.y=rotY;
+
+    const glass=box(1.72,1.24,.045,px,py,pz-.035,MAT.glass,g);
+    glass.rotation.y=rotY;
+
+    const parts=[
+      box(1.96,.07,.11,px,py+.69,pz-.065,frameMat,g),
+      box(1.96,.07,.11,px,py-.69,pz-.065,frameMat,g),
+      box(.07,1.44,.11,px-.945,py,pz-.065,frameMat,g),
+      box(.07,1.44,.11,px+.945,py,pz-.065,frameMat,g),
+      box(.055,1.23,.08,px,py,pz-.082,frameMat,g),
+      box(2.04,.06,.18,px,py-.79,pz-.08,sillMat,g)
+    ];
+    parts.forEach(o=>o.rotation.y=rotY);
+  };
+
+  for(let row=0;row<windowRows;row++){
+    const py=windowRows===1?Math.min(h-1.55,h*.62):(row===0?h*.42:h*.70);
+    for(let i=0;i<rows;i++){
+      const px=-w/2+2.3+i*4.2;
+      if(px>w/2-1.4) continue;
+      addWindow(px,py,frontZ,0);
+      if(i%2===0) addWindow(px,py,backZ,Math.PI);
+    }
   }
-  box(Math.min(6,w*.42),Math.min(3.8,h*.48),.12,0,Math.min(2.1,h*.38),frontZ-.01,MAT.buildingC,g);
+
+  box(Math.min(2.7,w*.22),3.15,.11,0,1.58,frontZ-.06,doorMat,g);
+  box(Math.min(3.3,w*.27),.18,.8,0,3.18,frontZ-.35,MAT.roof,g);
+
+  const plaque=new THREE.Mesh(new THREE.BoxGeometry(.72,.42,.035),MAT.metal);
+  plaque.position.set(Math.min(w*.32,4),2.15,frontZ-.09);
+  plaque.castShadow=true;
+  g.add(plaque);
+
   collider(x,z,w,d,1.2,h);
 }
 
 function addTree(x,z,s=1){
-  const g = new THREE.Group();
+  const g=new THREE.Group();
   g.position.set(x,0,z);
   g.scale.setScalar(s);
   world.add(g);
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.38,.48,3.5,8),MAT.trunk);
-  trunk.position.y=1.75; trunk.castShadow=true; trunk.receiveShadow=true; g.add(trunk);
-  const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(2.5,1),MAT.green);
-  crown.position.y=5; crown.scale.y=1.15; crown.castShadow=true; crown.receiveShadow=true; g.add(crown);
+
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(.38,.48,3.7,9),MAT.trunk);
+  trunk.position.y=1.85;
+  trunk.castShadow=true;
+  trunk.receiveShadow=true;
+  g.add(trunk);
+
+  for(const [bx,bz,lean] of [[-.34,.02,-.34],[.32,.02,.34],[-.14,.18,-.16],[.12,.2,.14]]){
+    const branch=new THREE.Mesh(new THREE.CylinderGeometry(.095,.17,1.9,7),MAT.trunk);
+    branch.position.set(bx,3.25,bz);
+    branch.rotation.z=lean;
+    branch.rotation.x=bz*.55;
+    branch.castShadow=true;
+    branch.receiveShadow=true;
+    g.add(branch);
+  }
+
+  const leafMats=[
+    new THREE.MeshStandardMaterial({color:0x23482d,roughness:.92}),
+    new THREE.MeshStandardMaterial({color:0x315d38,roughness:.94}),
+    new THREE.MeshStandardMaterial({color:0x3e6b43,roughness:.94})
+  ];
+  const crowns=[
+    [-.72,4.65,.78,1.45],
+    [.74,4.82,.98,1.35],
+    [0,5.28,1.15,1.5],
+    [-.12,5.9,.7,1.1]
+  ];
+  crowns.forEach(([cx,cy,cz,sc],i)=>{
+    const crown=new THREE.Mesh(new THREE.DodecahedronGeometry(1.65,1),leafMats[i%leafMats.length]);
+    crown.position.set(cx,cy,cz);
+    crown.scale.set(1.05*sc,1.02*sc,.96*sc);
+    crown.castShadow=true;
+    crown.receiveShadow=true;
+    g.add(crown);
+  });
+
+  circleCollider(x,z,1.05*s,4.5);
 }
 
 function addCentralFountain(){
@@ -392,49 +523,21 @@ function addCentralFountain(){
   basinMat.map=basinTexture;
   basinMat.needsUpdate=true;
 
-  // Four understated drain channels around the inside of the basin.
-  const drainMat=new THREE.MeshStandardMaterial({
-    color:0x20282c,
-    roughness:.64,
-    metalness:.48
-  });
-  for(let i=0;i<4;i++){
-    const a=i*Math.PI/2;
-    const drain=new THREE.Mesh(
-      new THREE.BoxGeometry(.9,.025,.13),
-      drainMat
-    );
-    drain.position.set(Math.cos(a)*4.55,.575,Math.sin(a)*4.55);
-    drain.rotation.y=-a;
-    g.add(drain);
-
-    const drainTrim=new THREE.Mesh(
-      new THREE.BoxGeometry(1.08,.018,.035),
-      trimMat
-    );
-    drainTrim.position.set(Math.cos(a)*4.55,.592,Math.sin(a)*4.55);
-    drainTrim.rotation.y=-a;
-    g.add(drainTrim);
-  }
-
-  // A handful of shallow radial seam lines break up the basin interior.
-  const seamMat=new THREE.MeshStandardMaterial({
-    color:0x536065,
-    roughness:.54,
-    metalness:.2,
-    transparent:true,
-    opacity:.55
+  // Keep metal details on the dry fountain structure, not on the water.
+  const serviceMat=new THREE.MeshStandardMaterial({
+    color:0x4b585d,
+    roughness:.24,
+    metalness:.8
   });
   for(let i=0;i<8;i++){
     const a=i*Math.PI/4;
-    const seam=new THREE.Mesh(
-      new THREE.BoxGeometry(2.9,.012,.018),
-      seamMat
+    const bolt=new THREE.Mesh(
+      new THREE.CylinderGeometry(.07,.07,.035,10),
+      serviceMat
     );
-    const r=2.35;
-    seam.position.set(Math.cos(a)*r,.574,Math.sin(a)*r);
-    seam.rotation.y=-a;
-    g.add(seam);
+    bolt.position.set(Math.cos(a)*5.72,.63,Math.sin(a)*5.72);
+    bolt.castShadow=true;
+    g.add(bolt);
   }
 
   // ------------------------------------------------------------
@@ -727,20 +830,35 @@ function addCentralFountain(){
     impactRipples.push(ripple);
   }
 
-  // Broad, low top surface. The player is meant to step onto this naturally;
-  // no visible ramp and no giant blocking rectangle.
-  const stepInner=3.55;
-  const stepOuter=5.78;
+  // Split the fountain into a shallow basin floor and a dry upper rim.
+  // The basin floor is below the water surface so the character's feet are
+  // visibly submerged instead of standing on top of the water.
+  const waterInner=1.62;
+  const waterOuter=5.56;
+  const rimInner=5.46;
+  const rimOuter=6.08;
+
   addWalkableSurface(
-    0,0,stepOuter*2.1,stepOuter*2.1,.72,
+    0,0,waterOuter*2.1,waterOuter*2.1,.48,
     null,
     (x,z)=>{
       const r2=x*x+z*z;
-      return r2>=stepInner*stepInner && r2<=stepOuter*stepOuter;
+      return r2>=waterInner*waterInner && r2<=waterOuter*waterOuter;
     }
   );
 
-  circleCollider(0,0,stepInner,.92);
+  addWalkableSurface(
+    0,0,rimOuter*2.1,rimOuter*2.1,.62,
+    null,
+    (x,z)=>{
+      const r2=x*x+z*z;
+      return r2>=rimInner*rimInner && r2<=rimOuter*rimOuter;
+    }
+  );
+
+  // Only the central structural pedestal blocks the player. Water, particles
+  // and the basin itself do not become combat-blocking collision geometry.
+  circleCollider(0,0,1.58,3.0,null,true);
 
   const light=new THREE.PointLight(0x76eaff,2.1,13,2);
   light.position.set(0,2.25,0);

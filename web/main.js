@@ -308,6 +308,135 @@ function addCentralFountain(){
   pedestalGlow.position.y=1.42;
   g.add(pedestalGlow);
 
+
+  // Fountain nozzle assembly: a small machined metal outlet makes the
+  // particle emitter feel physically anchored to the pedestal.
+  const nozzleMat=new THREE.MeshStandardMaterial({
+    color:0x39474c,
+    roughness:.26,
+    metalness:.82
+  });
+  const nozzleDarkMat=new THREE.MeshStandardMaterial({
+    color:0x172126,
+    roughness:.2,
+    metalness:.68
+  });
+  const nozzlePlate=new THREE.Mesh(
+    new THREE.CylinderGeometry(1.02,1.08,.12,40),
+    nozzleMat
+  );
+  nozzlePlate.position.y=2.06;
+  nozzlePlate.castShadow=true;
+  nozzlePlate.receiveShadow=true;
+  g.add(nozzlePlate);
+
+  const nozzleInset=new THREE.Mesh(
+    new THREE.CylinderGeometry(.72,.78,.075,40),
+    nozzleDarkMat
+  );
+  nozzleInset.position.y=2.13;
+  g.add(nozzleInset);
+
+  const nozzleLip=new THREE.Mesh(
+    new THREE.TorusGeometry(.56,.075,8,36),
+    trimMat
+  );
+  nozzleLip.rotation.x=Math.PI/2;
+  nozzleLip.position.y=2.175;
+  g.add(nozzleLip);
+
+  const nozzleCore=new THREE.Mesh(
+    new THREE.CylinderGeometry(.20,.26,.22,20),
+    nozzleDarkMat
+  );
+  nozzleCore.position.y=2.22;
+  nozzleCore.castShadow=true;
+  g.add(nozzleCore);
+
+  // Eight tiny radial recesses read as machining/fastener details without
+  // competing with the water.
+  for(let i=0;i<8;i++){
+    const a=i*Math.PI/4;
+    const detail=new THREE.Mesh(
+      new THREE.BoxGeometry(.18,.026,.055),
+      nozzleDarkMat
+    );
+    detail.position.set(Math.cos(a)*.83,2.128,Math.sin(a)*.83);
+    detail.rotation.y=-a;
+    g.add(detail);
+  }
+
+  // Subtle basin micro-texture: procedurally generated so it remains tiny,
+  // stable and cheap while giving the stone/metal surface something to catch
+  // the light from the moving water.
+  const textureCanvas=document.createElement('canvas');
+  textureCanvas.width=128;
+  textureCanvas.height=128;
+  const textureCtx=textureCanvas.getContext('2d');
+  textureCtx.fillStyle='#626c70';
+  textureCtx.fillRect(0,0,128,128);
+  for(let i=0;i<1700;i++){
+    const x=Math.random()*128;
+    const y=Math.random()*128;
+    const shade=72+Math.floor(Math.random()*58);
+    const alpha=.08+Math.random()*.16;
+    textureCtx.fillStyle='rgba('+shade+','+(shade+6)+','+(shade+8)+','+alpha.toFixed(3)+')';
+    const size=Math.random()*.9+0.2;
+    textureCtx.fillRect(x,y,size,size);
+  }
+  const basinTexture=new THREE.CanvasTexture(textureCanvas);
+  basinTexture.wrapS=THREE.RepeatWrapping;
+  basinTexture.wrapT=THREE.RepeatWrapping;
+  basinTexture.repeat.set(3.5,3.5);
+  basinTexture.colorSpace=THREE.SRGBColorSpace;
+  basinMat.map=basinTexture;
+  basinMat.needsUpdate=true;
+
+  // Four understated drain channels around the inside of the basin.
+  const drainMat=new THREE.MeshStandardMaterial({
+    color:0x20282c,
+    roughness:.64,
+    metalness:.48
+  });
+  for(let i=0;i<4;i++){
+    const a=i*Math.PI/2;
+    const drain=new THREE.Mesh(
+      new THREE.BoxGeometry(.9,.025,.13),
+      drainMat
+    );
+    drain.position.set(Math.cos(a)*4.55,.575,Math.sin(a)*4.55);
+    drain.rotation.y=-a;
+    g.add(drain);
+
+    const drainTrim=new THREE.Mesh(
+      new THREE.BoxGeometry(1.08,.018,.035),
+      trimMat
+    );
+    drainTrim.position.set(Math.cos(a)*4.55,.592,Math.sin(a)*4.55);
+    drainTrim.rotation.y=-a;
+    g.add(drainTrim);
+  }
+
+  // A handful of shallow radial seam lines break up the basin interior.
+  const seamMat=new THREE.MeshStandardMaterial({
+    color:0x536065,
+    roughness:.54,
+    metalness:.2,
+    transparent:true,
+    opacity:.55
+  });
+  for(let i=0;i<8;i++){
+    const a=i*Math.PI/4;
+    const seam=new THREE.Mesh(
+      new THREE.BoxGeometry(2.9,.012,.018),
+      seamMat
+    );
+    const r=2.35;
+    seam.position.set(Math.cos(a)*r,.574,Math.sin(a)*r);
+    seam.rotation.y=-a;
+    g.add(seam);
+  }
+
   // ------------------------------------------------------------
   // Water is particle-only. There is no solid water stream mesh.
   // The visual language follows mature fountain particle systems:

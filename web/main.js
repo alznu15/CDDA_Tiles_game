@@ -2545,6 +2545,52 @@ function updateSprintJumpArm(){
   }
 }
 
+function getCrosshairYaw(){
+  // The central reticle is the player's canonical aim direction.
+  // Camera pitch is ignored for body yaw; the character only needs the
+  // horizontal projection of the reticle direction.
+  const cameraDir=new THREE.Vector3();
+  camera.getWorldDirection(cameraDir);
+  cameraDir.y=0;
+  if(cameraDir.lengthSq()<1e-6){
+    return yaw+Math.PI;
+  }
+  cameraDir.normalize();
+  return Math.atan2(cameraDir.x,cameraDir.z);
+}
+
+function getManualFacingYaw(){
+  // D has explicit priority, as requested. While D is held the player can
+  // deliberately face/strafe right even though the reticle is elsewhere.
+  // A is the mirrored left-hand override.
+  if(input.d){
+    const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
+    return Math.atan2(right.x,right.z);
+  }
+  if(input.a){
+    const left=new THREE.Vector3(-Math.cos(yaw),0,Math.sin(yaw));
+    return Math.atan2(left.x,left.z);
+  }
+  return null;
+}
+
+function updateCharacterFacing(dt){
+  if(!started) return;
+
+  const manualYaw=getManualFacingYaw();
+  const targetYaw=manualYaw ?? getCrosshairYaw();
+
+  const diff=THREE.MathUtils.euclideanModulo(
+    targetYaw-player.rotation.y+Math.PI,
+    Math.PI*2
+  )-Math.PI;
+
+  // Quick manual response; slightly softer retargeting when returning to
+  // the reticle after A/D release, so the body smoothly catches the aim.
+  const response=manualYaw!==null ? 24 : 11.5;
+  player.rotation.y+=diff*Math.min(1,dt*response);
+}
+
 function updatePlayer(dt,time){
   updateSprintJumpArm();
 
@@ -2562,11 +2608,9 @@ function updatePlayer(dt,time){
   const sprint=input.shift;
   const speed=input.aim ? (sprint?8.2:4.9) : (sprint?10.5:6.2);
 
-  if(input.aim && started){
-    const targetYaw=yaw+Math.PI;
-    const diff=THREE.MathUtils.euclideanModulo(targetYaw-player.rotation.y+Math.PI,Math.PI*2)-Math.PI;
-    player.rotation.y+=diff*Math.min(1,dt*18);
-  }
+  // Character facing is now controlled by the reticle at all times.
+  // A/D are the only manual facing overrides, with D taking precedence.
+  updateCharacterFacing(dt);
 
   if(moving && started){
     const currentGround=groundHeightAt(player.position.x,player.position.z);
@@ -2577,21 +2621,23 @@ function updatePlayer(dt,time){
     if(canTraverseTo(nx,player.position.z,currentGround,player.position.y,!grounded)){
       player.position.x=nx;
     }
-    if(canTraverseTo(player.position.x,nz,groundHeightAt(player.position.x,player.position.z),player.position.y,!grounded)){
+    if(canTraverseTo(
+      player.position.x,
+      nz,
+      groundHeightAt(player.position.x,player.position.z),
+      player.position.y,
+      !grounded
+    )){
       player.position.z=nz;
     }
 
-    if(!input.aim){
-      const targetYaw=Math.atan2(step.x,step.z);
-      const diff=THREE.MathUtils.euclideanModulo(targetYaw-player.rotation.y+Math.PI,Math.PI*2)-Math.PI;
-      player.rotation.y+=diff*Math.min(1,dt*12);
-    }
+    // A/D facing already owns body rotation. W/S movement follows the current
+    // reticle aim unless the player is explicitly strafing with A/D.
   }
 
   const surfaceY=groundHeightAt(player.position.x,player.position.z);
 
   if(started){
-    // Tiny compatibility queue for platforms that deliver Space slightly late.
     if(jumpRequest && grounded && performance.now()-lastSpaceDown<220){
       performJump();
       jumpRequest=false;
@@ -2600,8 +2646,6 @@ function updatePlayer(dt,time){
     }
 
     if(grounded){
-      // Terrain traversal is automatic: small road/sidewalk height changes are
-      // absorbed as a smooth footstep/step-up animation instead of requiring jump.
       verticalVelocity=0;
       player.position.y=THREE.MathUtils.damp(
         player.position.y,
@@ -2614,6 +2658,7 @@ function updatePlayer(dt,time){
       const nextY=player.position.y+verticalVelocity*dt;
       const coverTop=topSurfaceAt(player.position.x,player.position.z);
       const landingY=Math.max(surfaceY,coverTop);
+
       if(nextY<=landingY){
         player.position.y=landingY;
         verticalVelocity=0;
